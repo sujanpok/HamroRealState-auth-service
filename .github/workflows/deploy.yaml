@@ -1,0 +1,100 @@
+name: Deploy Room Management Service
+
+on:
+  push:
+    branches: [master, develop]
+    paths:
+      - '**.js'
+      - 'Dockerfile'
+      - 'helm/**'
+      - '.github/workflows/deploy.yaml'
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: room-mgmt-service
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/room-mgmt-service:latest
+
+      - name: Sync ArgoCD app
+        uses: clowdhaus/argo-cd-action@v2
+        with:
+          version: v2.10.7
+          address: ${{ secrets.ARGOCD_SERVER }}
+          username: ${{ secrets.ARGOCD_USERNAME }}
+          password: ${{ secrets.ARGOCD_PASSWORD }}
+          insecure: true
+          command: app sync room-mgmt-service
+
+  # ✅ Send email on success
+  notify-success:
+    needs: build-and-deploy
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send success email
+        uses: dawidd6/action-send-mail@v3
+        continue-on-error: true
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "✅ Room Mgmt Service Deployment Successful"
+          body: |
+            Deployment completed successfully.
+
+            ✅ Docker pushed to GHCR
+            ✅ ArgoCD synced
+
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          to: you@example.com
+          from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+
+  # ❌ Send email on failure
+  notify-failure:
+    needs: build-and-deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@v3
+        continue-on-error: true
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ Room Mgmt Service Deployment Failed"
+          body: |
+            Deployment failed. Please check the workflow logs.
+
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          to: you@example.com
+          from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>

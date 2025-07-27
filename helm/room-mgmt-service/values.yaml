@@ -1,0 +1,17 @@
+image:
+  repository: ghcr.io/your-username/room-mgmt-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+env:
+  NODE_ENV: production
+  API_URL: https://api.example.com
+
+secret:
+  DB_PASSWORD: "your-db-password-here"
+
+service:
+  port: 80
+  targetPort: 3000
