@@ -138,7 +138,7 @@ EOF
                         sleep 5
                         
                         // Wait for rollout, targeting the color-suffixed deployment name
-                        sh "kubectl rollout status deployment/${HELM_RELEASE_NAME}-${NEW_COLOR} -n ${K3S_NAMESPACE} --timeout=5m"
+                        sh "kubectl rollout status deployment/${HELM_RELEASE_NAME}-${NEW_COLOR} -n ${K3S_NAMESPACE} --timeout=2m"
                         
                         // Test new deployment (adapt to your health endpoint)
                         echo "⏳ Testing new container (${NEW_COLOR})..."
