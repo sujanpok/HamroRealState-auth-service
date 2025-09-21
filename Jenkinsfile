@@ -61,8 +61,8 @@ pipeline {
                     // Detect current active color (default to blue if not found)
                     env.CURRENT_ACTIVE = sh(script: "kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' || echo '${BLUE_LABEL}'", returnStdout: true).trim()
                     env.NEW_COLOR = (env.CURRENT_ACTIVE == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
-                    env.NEW_RELEASE = "auth-release-${NEW_COLOR}"
-                    env.OLD_RELEASE = "auth-release-${(NEW_COLOR == BLUE_LABEL ? GREEN_LABEL : BLUE_LABEL)}"
+                    env.NEW_RELEASE = "auth-service-${NEW_COLOR}"
+                    env.OLD_RELEASE = "auth-service-${(NEW_COLOR == BLUE_LABEL ? GREEN_LABEL : BLUE_LABEL)}"
                     echo "Current active: ${env.CURRENT_ACTIVE} | Deploying to: ${env.NEW_COLOR} (release: ${env.NEW_RELEASE})"
                 }
             }
@@ -104,7 +104,6 @@ EOF
                 dir("${APP_DIR}") {
                     sh '''
                         echo "🏗️ Building from latest commit (ARM64 for Raspberry Pi)..."
-                        # Use buildx for multi-arch build (ARM64)
                         docker buildx create --use || true
                         docker buildx build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest --push .
                     '''
@@ -155,9 +154,9 @@ EOF
                         
                         // Wait for rollout
                         sleep 5
-                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=5m"
+                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=10m"
                         
-                        // Test new deployment directly via port-forward (to avoid testing old color)
+                        // Test new deployment directly via port-forward
                         echo "⏳ Testing new container (${NEW_COLOR})..."
                         sh '''
                             pod=$(kubectl get pod -l app=auth-service,color=${NEW_COLOR} -o jsonpath='{.items[0].metadata.name}' -n ${K3S_NAMESPACE})
@@ -168,7 +167,7 @@ EOF
                             kubectl port-forward pod/$pod 8080:${APP_PORT} -n ${K3S_NAMESPACE} &
                             sleep 2
                             for i in {1..30}; do
-                                if curl -f http://localhost:8080/health; then  # Adapt /health to your endpoint
+                                if curl -f http://localhost:8080/health; then  # Adjust /health to your endpoint
                                     echo "✅ New container is ready!"
                                     break
                                 fi
@@ -176,7 +175,7 @@ EOF
                                 sleep 3
                                 if [ $i -eq 30 ]; then
                                     echo "❌ New container failed health check"
-                                    kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service,color=${NEW_COLOR}
+                                    kubectl logs -n ${K3S_NAMESPACE} pod/$pod
                                     kill %1
                                     exit 1
                                 fi
@@ -282,9 +281,10 @@ EOF
         failure {
             sh '''
                 echo "❌ Deployment failed - emergency cleanup..."
+                kubectl delete pod -n ${K3S_NAMESPACE} -l app=auth-service --force --grace-period=0 || true
+                kubectl delete deployment -n ${K3S_NAMESPACE} -l app=auth-service || true
                 kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service || true
-                kubectl describe pods -n ${K3S_NAMESPACE} -l app=auth-service || true  # Added for better debugging
-                # Emergency cleanup (adapt as needed)
+                kubectl describe pods -n ${K3S_NAMESPACE} -l app=auth-service || true
                 docker container prune -f || true
                 docker image prune -f || true
             '''

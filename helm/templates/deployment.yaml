@@ -1,33 +1,53 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "auth-service.fullname" . }}
+  name: {{ .Release.Name }}  # Avoid appending color here to prevent duplication
   labels:
-    {{- include "auth-service.labels" . | nindent 4 }}
+    app: {{ .Values.appName | default "auth-service" }}
+    color: {{ .Values.color }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount | default 1 }}
   selector:
     matchLabels:
-      {{- include "auth-service.selectorLabels" . | nindent 6 }}
+      app: {{ .Values.appName | default "auth-service" }}
+      color: {{ .Values.color }}
   template:
     metadata:
       labels:
-        {{- include "auth-service.selectorLabels" . | nindent 8 }}
+        app: {{ .Values.appName | default "auth-service" }}
+        color: {{ .Values.color }}
     spec:
+      {{- if .Values.imagePullSecrets }}  # Add this block
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 6 }}
+      {{- end }}
       containers:
         - name: auth-service
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           ports:
-            - name: http
-              containerPort: {{ .Values.service.targetPort }}
-              protocol: TCP
+            - containerPort: 3001
           envFrom:
             - configMapRef:
-                name: {{ include "auth-service.fullname" . }}-config
+                name: {{ .Release.Name }}-config
             - secretRef:
-                name: {{ include "auth-service.fullname" . }}-secret
-          resources: {{ toYaml .Values.resources | nindent 12 }}
-      nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8 }}
-      affinity: {{ toYaml .Values.affinity | nindent 8 }}
-      tolerations: {{ toYaml .Values.tolerations | nindent 8 }}
+                name: {{ .Release.Name }}-secret
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          # Add readiness/liveness probes if not present for better rollout detection
+          readinessProbe:
+            httpGet:
+              path: /health  # Adjust to your app's health endpoint
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 10
