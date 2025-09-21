@@ -9,6 +9,8 @@ pipeline {
         // Docker Hub
         DOCKER_HUB = credentials('docker-hub-credentials')
 
+        KUBECONFIG = '/var/lib/jenkins/k3s.yaml'
+
         // App configs
         APP_NAME   = 'auth-service'
         APP_DIR    = "${WORKSPACE}"
