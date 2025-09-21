@@ -1,8 +1,0 @@
-# templates/namespace.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: room-management
-  labels:
-    name: room-management
-    app: room-mgmt-service
