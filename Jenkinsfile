@@ -98,47 +98,58 @@ EOF
 
         stage('Blue-Green Deploy to k3s') {
             steps {
-                script {
-                    echo "🔵 Starting blue-green deployment to k3s"
+                withCredentials([
+                    string(credentialsId: 'auth-jwt-secret', variable: 'JWT_SECRET'),
+                    string(credentialsId: 'auth-db-password', variable: 'DB_PASSWORD'),
+                    string(credentialsId: 'auth-database-url', variable: 'DATABASE_URL'),
+                    string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET')
+                ]) {
+                    script {
+                        echo "🔵 Starting blue-green deployment to k3s"
 
-                    // Deploy to the new color using Helm
-                    sh """
-                        helm upgrade --install ${HELM_RELEASE_NAME} ${HELM_CHART_PATH} \
-                            --values ${HELM_CHART_PATH}/values.yaml \
-                            --values helm/values-override.yaml \
-                            --set color=${NEW_COLOR} \
-                            --namespace ${K3S_NAMESPACE}
-                    """
-                    
-                    // Wait for rollout
-                    sh "kubectl rollout status deployment/${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} --timeout=5m"
-                    
-                    // Test new deployment (adapt to your health endpoint)
-                    echo "⏳ Testing new container (${NEW_COLOR})..."
-                    for (int i = 1; i <= 30; i++) {
-                        def testResult = sh(script: "curl -f http://${HELM_RELEASE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/health || true", returnStdout: true).trim()
-                        if (testResult.contains("OK")) {  // Adapt to your app's health response
-                            echo "✅ New container is ready!"
-                            break
+                        // Deploy to the new color using Helm, injecting secrets via --set
+                        sh """
+                            helm upgrade --install ${HELM_RELEASE_NAME} ${HELM_CHART_PATH} \
+                                --values ${HELM_CHART_PATH}/values.yaml \
+                                --values helm/values-override.yaml \
+                                --set color=${NEW_COLOR} \
+                                --set secrets.JWT_SECRET="${JWT_SECRET}" \
+                                --set secrets.DB_PASSWORD="${DB_PASSWORD}" \
+                                --set secrets.DATABASE_URL="${DATABASE_URL}" \
+                                --set secrets.CLIENT_SECRET="${CLIENT_SECRET}" \
+                                --namespace ${K3S_NAMESPACE}
+                        """
+                        
+                        // Wait for rollout
+                        sh "kubectl rollout status deployment/${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} --timeout=5m"
+                        
+                        // Test new deployment (adapt to your health endpoint)
+                        echo "⏳ Testing new container (${NEW_COLOR})..."
+                        for (int i = 1; i <= 30; i++) {
+                            def testResult = sh(script: "curl -f http://${HELM_RELEASE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/health || true", returnStdout: true).trim()
+                            if (testResult.contains("OK")) {  // Adapt to your app's health response
+                                echo "✅ New container is ready!"
+                                break
+                            }
+                            echo "Attempt $i/30 - waiting 3 seconds..."
+                            sleep 3
+                            if (i == 30) {
+                                echo "❌ New container failed health check"
+                                sh "kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service,color=${NEW_COLOR}"
+                                error "Health check failed"
+                            }
                         }
-                        echo "Attempt $i/30 - waiting 3 seconds..."
-                        sleep 3
-                        if (i == 30) {
-                            echo "❌ New container failed health check"
-                            sh "kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service,color=${NEW_COLOR}"
-                            error "Health check failed"
-                        }
+                        
+                        // Switch traffic by patching service
+                        sh """
+                            kubectl patch svc ${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${NEW_COLOR}\"}}}'
+                        """
+                        echo "🔄 Traffic switched to ${NEW_COLOR}"
+
+                        // Cleanup old environment
+                        def oldColor = (NEW_COLOR == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
+                        sh "helm uninstall ${HELM_RELEASE_NAME} --namespace ${K3S_NAMESPACE} || true"
                     }
-                    
-                    // Switch traffic by patching service
-                    sh """
-                        kubectl patch svc ${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${NEW_COLOR}\"}}}'
-                    """
-                    echo "🔄 Traffic switched to ${NEW_COLOR}"
-
-                    // Cleanup old environment
-                    def oldColor = (NEW_COLOR == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
-                    sh "helm uninstall ${HELM_RELEASE_NAME} --namespace ${K3S_NAMESPACE} || true"
                 }
             }
         }
