@@ -2,8 +2,8 @@ version: '3.8'
 
 services:
   frontend:
-    build: .  # Builds from your fixed Dockerfile
-    image: "${DOCKER_HUB_USR}/auth-service:latest"
+    build: .  
+    image: "sujan1234ray/auth-service:latest"  # same as Docker build tag
     container_name: auth-microservice
     restart: always
     ports:
