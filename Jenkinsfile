@@ -13,11 +13,10 @@ pipeline {
         APP_NAME   = 'auth-service'
         APP_DIR    = "${WORKSPACE}"
         PORT       = '80'  // External port for LoadBalancer
-        TEMP_PORT  = '81'  // Not used in k3s; for reference
 
         // Environment variables (adapt from your config.js/db.js)
         NODE_ENV   = 'production'
-        DB_HOST    = 'your-db-host'
+        DB_HOST    = 'postgres'
         DB_PORT    = '5432'
 
         // k3s and Helm configs
@@ -28,9 +27,6 @@ pipeline {
         // Blue-Green specific
         BLUE_LABEL = 'blue'
         GREEN_LABEL = 'green'
-        // Detect current active color (default to blue if not found)
-        CURRENT_ACTIVE = sh(script: "kubectl get svc ${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' || echo '${BLUE_LABEL}'", returnStdout: true).trim()
-        NEW_COLOR = (CURRENT_ACTIVE == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
 
         // Docker image
         DOCKER_IMAGE = "${DOCKER_HUB_USR}/${APP_NAME}"
@@ -52,6 +48,18 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+
+        stage('Initialize Blue-Green') {
+            steps {
+                script {
+                    echo "🔍 Detecting current active color..."
+                    // Detect current active color (default to blue if not found)
+                    env.CURRENT_ACTIVE = sh(script: "kubectl get svc ${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' || echo '${BLUE_LABEL}'", returnStdout: true).trim()
+                    env.NEW_COLOR = (env.CURRENT_ACTIVE == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
+                    echo "Current active: ${env.CURRENT_ACTIVE} | Deploying to: ${env.NEW_COLOR}"
+                }
             }
         }
 
@@ -156,10 +164,22 @@ EOF
 
         stage('Deploy Cloudflare Tunnel') {
             steps {
-                script {
-                    echo "🚀 Deploying/Updating Cloudflare Tunnel for external access"
-                    sh "kubectl apply -f cloudflare-tunnel.yaml"
-                    sh "kubectl rollout status deployment/cloudflared -n cloudflare --timeout=2m"
+                withCredentials([string(credentialsId: 'cloudflare-tunnel-token', variable: 'CLOUDFLARE_TOKEN')]) {
+                    script {
+                        echo "🚀 Deploying/Updating Cloudflare Tunnel for external access"
+                        // Create or update the Secret with the token from Jenkins credentials
+                        sh """
+                            kubectl create namespace cloudflare --dry-run=client -o yaml | kubectl apply -f -
+                            kubectl create secret generic tunnel-credentials \
+                                --namespace cloudflare \
+                                --from-literal=token="\${CLOUDFLARE_TOKEN}" \
+                                --dry-run=client -o yaml | kubectl apply -f -
+                        """
+                        // Apply the rest of the YAML (Namespace and Deployment)
+                        sh "kubectl apply -f cloudflare-tunnel.yaml"
+                        // Wait for rollout
+                        sh "kubectl rollout status deployment/cloudflared -n cloudflare --timeout=2m"
+                    }
                 }
             }
         }
@@ -239,7 +259,7 @@ EOF
                 echo "🔗 Triggered by: GitHub push"
                 echo "📦 Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                 echo "🌐 Internal access: http://${HELM_RELEASE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
-                echo "🌐 External access: https://auth.pokharelsujan.info.np (via Cloudflare Tunnel)"
+                echo "🌐 External access: [https://auth.pokharelsujan.info.np](https://auth.pokharelsujan.info.np) (via Cloudflare Tunnel)"
                 echo "📊 Final system status:"
                 kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service --format "table {{.NAME}}\t{{.STATUS}}"
                 free -h | head -2
