@@ -101,6 +101,9 @@ EOF
                         echo "🏗️ Building from latest commit (ARM64 for Raspberry Pi)..."
                         docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
                         docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        # Optionally tag and push latest
+                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                        docker push ${DOCKER_IMAGE}:latest
                     '''
                 }
             }
@@ -117,21 +120,25 @@ EOF
                     script {
                         echo "🔵 Starting blue-green deployment to k3s"
 
-                        // Deploy to the new color using Helm, injecting secrets via --set
-                        sh """
-                            helm upgrade --install ${HELM_RELEASE_NAME} ${HELM_CHART_PATH} \
-                                --values ${HELM_CHART_PATH}/values.yaml \
-                                --values helm/values-override.yaml \
-                                --set color=${NEW_COLOR} \
-                                --set secrets.JWT_SECRET="${JWT_SECRET}" \
-                                --set secrets.DB_PASSWORD="${DB_PASSWORD}" \
-                                --set secrets.DATABASE_URL="${DATABASE_URL}" \
-                                --set secrets.CLIENT_SECRET="${CLIENT_SECRET}" \
-                                --namespace ${K3S_NAMESPACE}
-                        """
+                        withEnv(["JWT_SECRET=${JWT_SECRET}", "DB_PASSWORD=${DB_PASSWORD}", "DATABASE_URL=${DATABASE_URL}", "CLIENT_SECRET=${CLIENT_SECRET}"]) {
+                            sh """
+                                helm upgrade --install ${HELM_RELEASE_NAME} ${HELM_CHART_PATH} \
+                                    --values ${HELM_CHART_PATH}/values.yaml \
+                                    --values helm/values-override.yaml \
+                                    --set color=${NEW_COLOR} \
+                                    --set secrets.JWT_SECRET=\${JWT_SECRET} \
+                                    --set secrets.DB_PASSWORD=\${DB_PASSWORD} \
+                                    --set secrets.DATABASE_URL=\${DATABASE_URL} \
+                                    --set secrets.CLIENT_SECRET=\${CLIENT_SECRET} \
+                                    --namespace ${K3S_NAMESPACE}
+                            """
+                        }
                         
-                        // Wait for rollout
-                        sh "kubectl rollout status deployment/${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} --timeout=5m"
+                        // Add a short delay to allow k3s to register the deployment
+                        sleep 5
+                        
+                        // Wait for rollout, targeting the color-suffixed deployment name
+                        sh "kubectl rollout status deployment/${HELM_RELEASE_NAME}-${NEW_COLOR} -n ${K3S_NAMESPACE} --timeout=5m"
                         
                         // Test new deployment (adapt to your health endpoint)
                         echo "⏳ Testing new container (${NEW_COLOR})..."
@@ -250,6 +257,7 @@ EOF
             sh '''
                 echo "❌ Deployment failed - emergency cleanup..."
                 kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service || true
+                kubectl describe pods -n ${K3S_NAMESPACE} -l app=auth-service || true  # Added for better debugging
                 # Emergency cleanup (adapt as needed)
                 docker container prune -f || true
                 docker image prune -f || true
@@ -261,7 +269,7 @@ EOF
                 echo "🔗 Triggered by: GitHub push"
                 echo "📦 Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                 echo "🌐 Internal access: http://${HELM_RELEASE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
-                echo "🌐 External access: [https://auth.pokharelsujan.info.np](https://auth.pokharelsujan.info.np) (via Cloudflare Tunnel)"
+                echo "🌐 External access: https://auth.pokharelsujan.info.np (via Cloudflare Tunnel)"
                 echo "📊 Final system status:"
                 kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service --format "table {{.NAME}}\t{{.STATUS}}"
                 free -h | head -2
