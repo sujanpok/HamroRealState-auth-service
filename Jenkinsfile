@@ -154,7 +154,7 @@ EOF
                         
                         // Wait for rollout
                         sleep 5
-                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=10m"
+                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=1m"
                         
                         // Test new deployment directly via port-forward
                         echo "⏳ Testing new container (${NEW_COLOR})..."
