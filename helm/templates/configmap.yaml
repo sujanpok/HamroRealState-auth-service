@@ -3,6 +3,6 @@ kind: ConfigMap
 metadata:
   name: {{ include "auth-service.fullname" . }}-config
 data:
-  {{- range $key, $value := .Values.env }}
+{{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}
-  {{- end }}
+{{- end }}
