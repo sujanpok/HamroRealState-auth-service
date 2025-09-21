@@ -14,7 +14,8 @@ pipeline {
         // App configs
         APP_NAME   = 'auth-service'
         APP_DIR    = "${WORKSPACE}"
-        PORT       = '80'  // External port for LoadBalancer
+        PORT       = '80'  // Service port (external for LoadBalancer)
+        APP_PORT   = '3001'  // Pod/container port where app listens
 
         // Environment variables (adapt from your config.js/db.js)
         NODE_ENV   = 'production'
@@ -22,9 +23,9 @@ pipeline {
         DB_PORT    = '5432'
 
         // k3s and Helm configs
-        HELM_RELEASE_NAME = 'auth-service'
-        HELM_CHART_PATH   = './helm'  // Path to your Helm chart
-        K3S_NAMESPACE     = 'default'  // Or your preferred namespace
+        HELM_CHART_PATH = './helm'  // Path to your Helm chart
+        K3S_NAMESPACE   = 'default'  // Or your preferred namespace
+        SERVICE_NAME    = 'auth-service'  // Fixed service name for traffic switching
 
         // Blue-Green specific
         BLUE_LABEL = 'blue'
@@ -58,9 +59,11 @@ pipeline {
                 script {
                     echo "🔍 Detecting current active color..."
                     // Detect current active color (default to blue if not found)
-                    env.CURRENT_ACTIVE = sh(script: "kubectl get svc ${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' || echo '${BLUE_LABEL}'", returnStdout: true).trim()
+                    env.CURRENT_ACTIVE = sh(script: "kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' || echo '${BLUE_LABEL}'", returnStdout: true).trim()
                     env.NEW_COLOR = (env.CURRENT_ACTIVE == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
-                    echo "Current active: ${env.CURRENT_ACTIVE} | Deploying to: ${env.NEW_COLOR}"
+                    env.NEW_RELEASE = "auth-release-${NEW_COLOR}"
+                    env.OLD_RELEASE = "auth-release-${(NEW_COLOR == BLUE_LABEL ? GREEN_LABEL : BLUE_LABEL)}"
+                    echo "Current active: ${env.CURRENT_ACTIVE} | Deploying to: ${env.NEW_COLOR} (release: ${env.NEW_RELEASE})"
                 }
             }
         }
@@ -78,6 +81,8 @@ env:
   NODE_ENV: ${NODE_ENV}
   DB_HOST: ${DB_HOST}
   DB_PORT: ${DB_PORT}
+imagePullSecrets:
+  - name: docker-hub-credentials
 EOF
                         echo "✅ values-override.yaml generated!"
                         cat helm/values-override.yaml
@@ -99,12 +104,26 @@ EOF
                 dir("${APP_DIR}") {
                     sh '''
                         echo "🏗️ Building from latest commit (ARM64 for Raspberry Pi)..."
-                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                        # Optionally tag and push latest
-                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
-                        docker push ${DOCKER_IMAGE}:latest
+                        # Use buildx for multi-arch build (ARM64)
+                        docker buildx create --use || true
+                        docker buildx build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest --push .
                     '''
+                }
+            }
+        }
+
+        stage('Create Image Pull Secret') {
+            steps {
+                script {
+                    // Create or update the docker-registry secret for image pulls
+                    sh """
+                        kubectl create secret docker-registry docker-hub-credentials \
+                            --docker-server=https://index.docker.io/v1/ \
+                            --docker-username="${DOCKER_HUB_USR}" \
+                            --docker-password="${DOCKER_HUB_PSW}" \
+                            -n ${K3S_NAMESPACE} \
+                            --dry-run=client -o yaml | kubectl apply -f -
+                    """
                 }
             }
         }
@@ -122,7 +141,7 @@ EOF
 
                         withEnv(["JWT_SECRET=${JWT_SECRET}", "DB_PASSWORD=${DB_PASSWORD}", "DATABASE_URL=${DATABASE_URL}", "CLIENT_SECRET=${CLIENT_SECRET}"]) {
                             sh """
-                                helm upgrade --install ${HELM_RELEASE_NAME} ${HELM_CHART_PATH} \
+                                helm upgrade --install ${NEW_RELEASE} ${HELM_CHART_PATH} \
                                     --values ${HELM_CHART_PATH}/values.yaml \
                                     --values helm/values-override.yaml \
                                     --set color=${NEW_COLOR} \
@@ -134,38 +153,45 @@ EOF
                             """
                         }
                         
-                        // Add a short delay to allow k3s to register the deployment
+                        // Wait for rollout
                         sleep 5
+                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=5m"
                         
-                        // Wait for rollout, targeting the color-suffixed deployment name
-                        sh "kubectl rollout status deployment/${HELM_RELEASE_NAME}-${NEW_COLOR} -n ${K3S_NAMESPACE} --timeout=2m"
-                        
-                        // Test new deployment (adapt to your health endpoint)
+                        // Test new deployment directly via port-forward (to avoid testing old color)
                         echo "⏳ Testing new container (${NEW_COLOR})..."
-                        for (int i = 1; i <= 30; i++) {
-                            def testResult = sh(script: "curl -f http://${HELM_RELEASE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/health || true", returnStdout: true).trim()
-                            if (testResult.contains("OK")) {  // Adapt to your app's health response
-                                echo "✅ New container is ready!"
-                                break
-                            }
-                            echo "Attempt $i/30 - waiting 3 seconds..."
-                            sleep 3
-                            if (i == 30) {
-                                echo "❌ New container failed health check"
-                                sh "kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service,color=${NEW_COLOR}"
-                                error "Health check failed"
-                            }
-                        }
+                        sh '''
+                            pod=$(kubectl get pod -l app=auth-service,color=${NEW_COLOR} -o jsonpath='{.items[0].metadata.name}' -n ${K3S_NAMESPACE})
+                            if [ -z "$pod" ]; then
+                                echo "❌ No pod found for ${NEW_COLOR}"
+                                exit 1
+                            fi
+                            kubectl port-forward pod/$pod 8080:${APP_PORT} -n ${K3S_NAMESPACE} &
+                            sleep 2
+                            for i in {1..30}; do
+                                if curl -f http://localhost:8080/health; then  # Adapt /health to your endpoint
+                                    echo "✅ New container is ready!"
+                                    break
+                                fi
+                                echo "Attempt $i/30 - waiting 3 seconds..."
+                                sleep 3
+                                if [ $i -eq 30 ]; then
+                                    echo "❌ New container failed health check"
+                                    kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service,color=${NEW_COLOR}
+                                    kill %1
+                                    exit 1
+                                fi
+                            done
+                            kill %1  # Stop port-forward
+                        '''
                         
                         // Switch traffic by patching service
                         sh """
-                            kubectl patch svc ${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${NEW_COLOR}\"}}}'
+                            kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${NEW_COLOR}\"}}}'
                         """
                         echo "🔄 Traffic switched to ${NEW_COLOR}"
 
                         // Cleanup old environment
-                        def oldColor = (NEW_COLOR == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
-                        sh "helm uninstall ${HELM_RELEASE_NAME} --namespace ${K3S_NAMESPACE} || true"
+                        sh "helm uninstall ${OLD_RELEASE} --namespace ${K3S_NAMESPACE} || true"
                     }
                 }
             }
@@ -198,13 +224,13 @@ EOF
                 sh '''
                     echo "🏥 Final health verification..."
                     # Internal check via cluster DNS
-                    curl -f http://${HELM_RELEASE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/health || exit 1
+                    curl -f http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/health || exit 1
                     
                     echo "📊 Pods status:"
                     kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service -o wide
                     
                     echo "📊 Service status:"
-                    kubectl get svc ${HELM_RELEASE_NAME} -n ${K3S_NAMESPACE} -o wide
+                    kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -o wide
                 '''
             }
         }
@@ -268,10 +294,10 @@ EOF
                 echo "✅ Auto-deployment successful!"
                 echo "🔗 Triggered by: GitHub push"
                 echo "📦 Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                echo "🌐 Internal access: http://${HELM_RELEASE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
+                echo "🌐 Internal access: http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
                 echo "🌐 External access: https://auth.pokharelsujan.info.np (via Cloudflare Tunnel)"
                 echo "📊 Final system status:"
-                kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service --format "table {{.NAME}}\t{{.STATUS}}"
+                kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service --no-headers -o custom-columns="NAME:.metadata.name,STATUS:.status.phase"
                 free -h | head -2
             '''
         }
