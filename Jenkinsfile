@@ -97,8 +97,8 @@ EOF
                 dir("${APP_DIR}") {
                     sh '''
                         echo "🏗️ Building from latest commit (ARM64 for Raspberry Pi)..."
-                         docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        docker build -t ${DOCKER_HUB_USR}/${APP_NAME}:latest .
+                        docker push ${DOCKER_HUB_USR}/${APP_NAME}:latest
                     '''
                 }
             }
