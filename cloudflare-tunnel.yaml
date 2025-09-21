@@ -3,15 +3,6 @@ kind: Namespace
 metadata:
   name: cloudflare
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: tunnel-credentials
-  namespace: cloudflare
-type: Opaque
-stringData:
-  token: "<paste-your-cloudflare-tunnel-token-here>"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
