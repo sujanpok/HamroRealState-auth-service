@@ -1,0 +1,5 @@
+apiVersion: v2
+name: auth-service
+description: Helm chart for auth-service on k3s with blue-green and MetalLB/Cloudflare support
+version: 0.1.0
+appVersion: "1.0.0"

@@ -1,24 +1,21 @@
-# Use the official Node.js 22 Alpine image (lightweight and secure)
-FROM node:22-alpine
+# Use ARM64-compatible Node.js base image for Raspberry Pi
+FROM node:18-alpine
 
 # Set working directory
 WORKDIR /app
 
-# Copy only package files first for Docker cache efficiency
+# Copy package.json and install dependencies
 COPY package*.json ./
-
-# Install only production dependencies
 RUN npm ci --only=production
 
-# Copy the rest of the application code
+# Copy application code (including server.js, routes, etc.)
 COPY . .
 
-# Expose the app port (change if your app uses a different port)
-EXPOSE 5000
+# Expose the port from env (defaults to 3001 in .env)
+EXPOSE 3001
 
-# Optional: Use a non-root user for better security
-# RUN addgroup -S nodejs && adduser -S nodejs -G nodejs
-# USER nodejs
+# Run the app as non-root user for security
+USER node
 
-# Start the app
-CMD ["npm", "start"]
+# Start the server
+CMD ["node", "server.js"]

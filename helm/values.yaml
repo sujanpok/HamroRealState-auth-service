@@ -1,0 +1,51 @@
+replicaCount: 1
+
+image:
+  repository: yourdockerhub/auth-service  # Update to your Docker Hub repo
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+color: blue  # Default; Jenkins sets to blue or green for blue-green
+
+service:
+  type: LoadBalancer  # For MetalLB local IP assignment
+  port: 80
+  targetPort: 3001  # Matches your PORT=3001 from .env/server.js
+
+ingress:
+  enabled: false  # Disable if using Cloudflare Tunnel
+
+env:  # Non-sensitive vars (injected via ConfigMap)
+  CORS_ORIGINS: "http://localhost:4200,https://hamrorealstate.store,https://web.pokharelsujan.info.np/"
+  PORT: "3001"
+  HOST: "localhost"
+  DB_MODE: "cloud"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_USER: "postgres"
+  DB_NAME: "neondb"
+  DB_SCHEMA: "REALSTATE"
+  LOGIN: "LOGIN_TABLE"
+  USER_PROFILE: "USER_PROFILE_TABLE"
+  CLIENT_ID: "539011910849-qk1h6i9c5t9d0bn094jaa9q6rt2k7amu.apps.googleusercontent.com"
+  REDIRECT_URI: "http://localhost:8000/oauth2callback"
+  JWT_EXPIRATION: "10m"  # From .env
+
+secrets:  # Sensitive vars (injected via Secret; provide in plaintext here—Helm encodes them)
+  JWT_SECRET: "<inject-from-jenkins>"
+  DB_PASSWORD: "<inject-from-jenkins>"
+  DATABASE_URL: "<inject-from-jenkins>"
+  CLIENT_SECRET: "<inject-from-jenkins>"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+nodeSelector:
+  kubernetes.io/arch: arm64  # For Raspberry Pi
+tolerations: []
+affinity: {}

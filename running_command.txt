@@ -1,0 +1,32 @@
+1. Development mode
+
+This will load .env.development automatically:
+
+npm run dev
+
+
+or explicitly:
+
+vite --mode development
+
+2. Production mode (build)
+
+This will load .env.production:
+
+npm run build
+
+
+or explicitly:
+
+vite build --mode production
+
+
+Then preview the build:
+
+npm run preview
+
+
+Initial Setup (Do This Once): Manually apply it after installing MetalLB on your k3s cluster:
+
+text
+kubectl apply -f metallb-config.yaml
