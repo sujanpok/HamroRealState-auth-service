@@ -1,9 +1,9 @@
 replicaCount: 1
 
 image:
-  repository: yourdockerhub/auth-service  # Update to your Docker Hub repo
+  repository: sujan1234ray/auth-service  # Updated to your actual Docker Hub repo (from Jenkinsfile)
   pullPolicy: IfNotPresent
-  tag: "latest"
+  tag: "latest"  # Default; Jenkins overrides with BUILD_NUMBER for uniqueness
 
 color: blue  # Default; Jenkins sets to blue or green for blue-green
 
@@ -31,7 +31,7 @@ env:  # Non-sensitive vars (injected via ConfigMap)
   REDIRECT_URI: "http://localhost:8000/oauth2callback"
   JWT_EXPIRATION: "10m"  # From .env
 
-secrets:  # Sensitive vars (injected via Secret; provide in plaintext here—Helm encodes them)
+secrets:  # Sensitive vars (injected via Secret; overridden by Jenkins --set)
   JWT_SECRET: "<inject-from-jenkins>"
   DB_PASSWORD: "<inject-from-jenkins>"
   DATABASE_URL: "<inject-from-jenkins>"
@@ -45,7 +45,27 @@ resources:
     cpu: 250m
     memory: 256Mi
 
+# Add probes for better readiness detection (adjust path/port if needed)
+livenessProbe:
+  httpGet:
+    path: /health  # Assuming your app has this endpoint
+    port: 3001
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  initialDelaySeconds: 10
+  periodSeconds: 5
+
+# For private Docker Hub pulls (create this secret in k3s with your Docker creds)
+imagePullSecrets:
+  - name: docker-hub-credentials  # Match a Kubernetes secret you create
+
 nodeSelector:
   kubernetes.io/arch: arm64  # For Raspberry Pi
-tolerations: []
-affinity: {}
+
+tolerations: []  # Add if needed for tainted nodes
+
+affinity: {}  # Add pod anti-affinity if scaling replicas
