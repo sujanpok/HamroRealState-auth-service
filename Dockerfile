@@ -1,18 +1,11 @@
 FROM node:18-alpine
 
-# Install build tools for native modules
-RUN apk add --no-cache python3 make g++ bash git
-
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+
+RUN npm install --production  # devDependenciesを除外して軽量化
 
 COPY . .
-RUN npm run build
 
-# Serve static files globally
-RUN npm install -g serve
-
-EXPOSE 80
-CMD ["serve", "-s", "dist", "-l", "80"]
+CMD ["npm", "start"]
