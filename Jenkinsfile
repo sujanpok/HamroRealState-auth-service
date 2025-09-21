@@ -22,7 +22,7 @@ pipeline {
         DB_PORT    = '5432'
 
         // k3s and Helm configs
-        HELM_RELEASE_NAME = 'auth-release'
+        HELM_RELEASE_NAME = 'auth-service'
         HELM_CHART_PATH   = './helm'  // Path to your Helm chart
         K3S_NAMESPACE     = 'default'  // Or your preferred namespace
 
