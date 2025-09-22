@@ -68,28 +68,7 @@ pipeline {
             }
         }
 
-        stage('Generate values.yaml overrides') {
-            steps {
-                dir("${APP_DIR}") {
-                    sh '''
-                        echo "📝 Generating Helm values overrides..."
-                        cat > helm/values-override.yaml <<EOF
-image:
-  repository: ${DOCKER_IMAGE}
-  tag: ${DOCKER_TAG}
-env:
-  NODE_ENV: ${NODE_ENV}
-  DB_HOST: ${DB_HOST}
-  DB_PORT: ${DB_PORT}
-imagePullSecrets:
-  - name: docker-hub-credentials
-EOF
-                        echo "✅ values-override.yaml generated!"
-                        cat helm/values-override.yaml
-                    '''
-                }
-            }
-        }
+        // ⚠️ REMOVED: Generate values.yaml overrides stage
 
         stage('Docker Login') {
             steps {
@@ -142,8 +121,12 @@ EOF
                             sh """
                                 helm upgrade --install ${NEW_RELEASE} ${HELM_CHART_PATH} \
                                     --values ${HELM_CHART_PATH}/values.yaml \
-                                    --values helm/values-override.yaml \
                                     --set color=${NEW_COLOR} \
+                                    --set image.repository=${DOCKER_IMAGE} \
+                                    --set image.tag=${DOCKER_TAG} \
+                                    --set env.NODE_ENV=${NODE_ENV} \
+                                    --set env.DB_HOST=${DB_HOST} \
+                                    --set env.DB_PORT=${DB_PORT} \
                                     --set secrets.JWT_SECRET=\${JWT_SECRET} \
                                     --set secrets.DB_PASSWORD=\${DB_PASSWORD} \
                                     --set secrets.DATABASE_URL=\${DATABASE_URL} \
