@@ -1,4 +1,5 @@
-replicaCount: 1
+replicaCount: 2
+
 appName: auth-service
 
 image:
@@ -12,8 +13,7 @@ service:
   type: LoadBalancer
   port: 80
   targetPort: 3001
-
-serviceName: auth-service
+  serviceName: auth-service
 
 # Environment variables for ConfigMap
 env:
@@ -31,14 +31,14 @@ env:
   CLIENT_ID: "539011910849-qk1h6i9c5t9d0bn094jaa9q6rt2k7amu.apps.googleusercontent.com"
   REDIRECT_URI: "http://localhost:8000/oauth2callback"
   JWT_EXPIRATION: "10m"
-  NODE_ENV: "production"  # Will be overridden by Jenkins
+  NODE_ENV: "production" # Will be overridden by Jenkins
 
 # Sensitive variables for Secret
 secrets:
-  JWT_SECRET: "<inject-from-jenkins>"
-  DB_PASSWORD: "<inject-from-jenkins>"
-  DATABASE_URL: "<inject-from-jenkins>"
-  CLIENT_SECRET: "<inject-from-jenkins>"
+  JWT_SECRET: ""
+  DB_PASSWORD: ""
+  DATABASE_URL: ""
+  CLIENT_SECRET: ""
 
 resources:
   limits:
@@ -52,22 +52,28 @@ livenessProbe:
   httpGet:
     path: /health
     port: 3001
-  initialDelaySeconds: 30
+  initialDelaySeconds: 20
   periodSeconds: 10
-  failureThreshold: 5    # Increased from default 3
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
 
 readinessProbe:
   httpGet:
     path: /health
     port: 3001
-  initialDelaySeconds: 15
+  initialDelaySeconds: 5
   periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
 
 imagePullSecrets:
-  - name: docker-hub-credentials
+- name: docker-hub-credentials
 
 nodeSelector:
   kubernetes.io/arch: arm64
 
 tolerations: []
+
 affinity: {}
