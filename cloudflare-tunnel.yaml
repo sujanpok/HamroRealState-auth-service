@@ -23,7 +23,7 @@ spec:
         kubernetes.io/arch: arm64
       containers:
       - name: cloudflared
-        image: cloudflare/cloudflared:2024.9.1    # ✅ Specific stable version
+        image: cloudflare/cloudflared:latest    # ✅ Specific stable version
         args:
         - tunnel
         - --no-autoupdate
