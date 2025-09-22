@@ -229,7 +229,7 @@ pipeline {
                         // Apply the rest of the YAML (Namespace and Deployment)
                         sh "kubectl apply -f cloudflare-tunnel.yaml"
                         // Wait for rollout
-                        sh "kubectl rollout status deployment/cloudflared -n cloudflare --timeout=2m"
+                        sh "kubectl rollout status deployment/cloudflared -n cloudflare --timeout=1m"
                     }
                 }
             }
