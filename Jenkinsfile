@@ -24,7 +24,7 @@ pipeline {
 
         // k3s and Helm configs
         HELM_CHART_PATH = './helm'  // Path to your Helm chart
-        K3S_NAMESPACE   = 'auth-microservice'  // Or your preferred namespace
+        K3S_NAMESPACE   = 'default'  // Or your preferred namespace
         SERVICE_NAME    = 'auth-service'  // Fixed service name for traffic switching
 
         // Blue-Green specific
