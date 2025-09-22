@@ -1,10 +1,13 @@
-{{- if .Values.env }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "auth-service.fullname" . }}-config
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.appName | default "auth-service" }}
+    chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    release: {{ .Release.Name }}
 data:
-{{- range $key, $value := .Values.env }}
+  {{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}
-{{- end }}
-{{- end }}
+  {{- end }}

@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}  # Shared service name for blue-green
+  name: {{ .Values.serviceName | default .Values.appName | default "auth-service" }}
+  namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "auth-service.labels" . | nindent 4 }}
+    app: {{ .Values.appName | default "auth-service" }}
 spec:
-  type: {{ .Values.service.type }}  # LoadBalancer for MetalLB
+  type: {{ .Values.service.type }}
   ports:
-    - port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.targetPort }}
-      protocol: TCP
-      name: http
+  - port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.targetPort }}
+    protocol: TCP
   selector:
-    app: {{ include "auth-service.name" . }}
-    color: {{ .Values.color | default "blue" }}  # Patched during blue-green switch
+    app: {{ .Values.appName | default "auth-service" }}
+    color: {{ .Values.color }}

@@ -1,21 +1,22 @@
 replicaCount: 1
+appName: auth-service
 
 image:
-  repository: sujan1234ray/auth-service  # Updated to your actual Docker Hub repo (from Jenkinsfile)
+  repository: sujan1234ray/auth-service
   pullPolicy: IfNotPresent
-  tag: "latest"  # Default; Jenkins overrides with BUILD_NUMBER for uniqueness
+  tag: "latest"
 
-color: blue  # Default; Jenkins sets to blue or green for blue-green
+color: blue
 
 service:
-  type: LoadBalancer  # For MetalLB local IP assignment
+  type: LoadBalancer
   port: 80
-  targetPort: 3001  # Matches your PORT=3001 from .env/server.js
+  targetPort: 3001
 
-ingress:
-  enabled: false  # Disable if using Cloudflare Tunnel
+serviceName: auth-service
 
-env:  # Non-sensitive vars (injected via ConfigMap)
+# Environment variables for ConfigMap
+env:
   CORS_ORIGINS: "http://localhost:4200,https://hamrorealstate.store,https://web.pokharelsujan.info.np/"
   PORT: "3001"
   HOST: "localhost"
@@ -29,9 +30,11 @@ env:  # Non-sensitive vars (injected via ConfigMap)
   USER_PROFILE: "USER_PROFILE_TABLE"
   CLIENT_ID: "539011910849-qk1h6i9c5t9d0bn094jaa9q6rt2k7amu.apps.googleusercontent.com"
   REDIRECT_URI: "http://localhost:8000/oauth2callback"
-  JWT_EXPIRATION: "10m"  # From .env
+  JWT_EXPIRATION: "10m"
+  NODE_ENV: "production"  # Will be overridden by Jenkins
 
-secrets:  # Sensitive vars (injected via Secret; overridden by Jenkins --set)
+# Sensitive variables for Secret
+secrets:
   JWT_SECRET: "<inject-from-jenkins>"
   DB_PASSWORD: "<inject-from-jenkins>"
   DATABASE_URL: "<inject-from-jenkins>"
@@ -45,13 +48,13 @@ resources:
     cpu: 250m
     memory: 256Mi
 
-# Add probes for better readiness detection (adjust path/port if needed)
 livenessProbe:
   httpGet:
-    path: /health  # Assuming your app has this endpoint
+    path: /health
     port: 3001
   initialDelaySeconds: 30
   periodSeconds: 10
+
 readinessProbe:
   httpGet:
     path: /health
@@ -59,13 +62,11 @@ readinessProbe:
   initialDelaySeconds: 10
   periodSeconds: 5
 
-# For private Docker Hub pulls (create this secret in k3s with your Docker creds)
 imagePullSecrets:
-  - name: docker-hub-credentials  # Match a Kubernetes secret you create
+  - name: docker-hub-credentials
 
 nodeSelector:
-  kubernetes.io/arch: arm64  # For Raspberry Pi
+  kubernetes.io/arch: arm64
 
-tolerations: []  # Add if needed for tainted nodes
-
-affinity: {}  # Add pod anti-affinity if scaling replicas
+tolerations: []
+affinity: {}
