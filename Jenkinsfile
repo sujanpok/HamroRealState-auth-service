@@ -118,7 +118,7 @@ pipeline {
                         echo "🔵 Starting blue-green deployment to k3s"
 
                         withEnv(["JWT_SECRET=${JWT_SECRET}", "DB_PASSWORD=${DB_PASSWORD}", "DATABASE_URL=${DATABASE_URL}", "CLIENT_SECRET=${CLIENT_SECRET}"]) {
-                            sh """
+                            sh '''
                                 helm upgrade --install ${NEW_RELEASE} ${HELM_CHART_PATH} \
                                     --values ${HELM_CHART_PATH}/values.yaml \
                                     --set color=${NEW_COLOR} \
@@ -132,7 +132,7 @@ pipeline {
                                     --set secrets.DATABASE_URL=\${DATABASE_URL} \
                                     --set secrets.CLIENT_SECRET=\${CLIENT_SECRET} \
                                     --namespace ${K3S_NAMESPACE}
-                            """
+                            '''
                         }
                         
                         // Wait for rollout
