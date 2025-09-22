@@ -23,7 +23,7 @@ spec:
         kubernetes.io/arch: arm64
       containers:
       - name: cloudflared
-        image: cloudflare/cloudflared:latest    # ✅ Remove -arm64 suffix
+        image: cloudflare/cloudflared:2024.9.1    # ✅ Specific stable version
         args:
         - tunnel
         - --no-autoupdate
@@ -35,11 +35,4 @@ spec:
             secretKeyRef:
               name: tunnel-credentials
               key: token
-        resources:
-          limits:
-            cpu: 100m
-            memory: 128Mi
-          requests:
-            cpu: 50m
-            memory: 64Mi
-        # ✅ Remove problematic health checks for now
+        # ✅ NO RESOURCE CONSTRAINTS - Allow unlimited resources
