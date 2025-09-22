@@ -20,7 +20,7 @@ service:
 
 # Environment variables for ConfigMap
 env:
-  CORS_ORIGINS: "http://localhost:4200,https://hamrorealstate.store,https://web.pokharelsujan.info.np/"
+  CORS_ORIGINS: "http://localhost:4200,https://pokharelsujan.info.np/"
   PORT: "3001"
   HOST: "0.0.0.0"
   DB_MODE: "cloud"
