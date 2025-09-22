@@ -154,7 +154,7 @@ pipeline {
                         // Wait for rollout
                         echo "⏳ Waiting for deployment rollout..."
                         sleep 10
-                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=3m"
+                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=1m"
                         
                         // Test new deployment directly via port-forward
                         echo "⏳ Testing new container (${NEW_COLOR})..."
