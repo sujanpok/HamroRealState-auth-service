@@ -19,7 +19,7 @@ serviceName: auth-service
 env:
   CORS_ORIGINS: "http://localhost:4200,https://hamrorealstate.store,https://web.pokharelsujan.info.np/"
   PORT: "3001"
-  HOST: "localhost"
+  HOST: "0.0.0.0"
   DB_MODE: "cloud"
   DB_HOST: "postgres"
   DB_PORT: "5432"
