@@ -54,12 +54,13 @@ livenessProbe:
     port: 3001
   initialDelaySeconds: 30
   periodSeconds: 10
+  failureThreshold: 5    # Increased from default 3
 
 readinessProbe:
   httpGet:
     path: /health
     port: 3001
-  initialDelaySeconds: 10
+  initialDelaySeconds: 15
   periodSeconds: 5
 
 imagePullSecrets:
