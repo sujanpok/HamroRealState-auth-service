@@ -213,28 +213,6 @@ pipeline {
             }
         }
 
-        stage('Deploy Cloudflare Tunnel') {
-            steps {
-                withCredentials([string(credentialsId: 'cloudflare-tunnel-token', variable: 'CLOUDFLARE_TOKEN')]) {
-                    script {
-                        echo "🚀 Deploying/Updating Cloudflare Tunnel for external access"
-                        // Create or update the Secret with the token from Jenkins credentials
-                        sh """
-                            kubectl create namespace cloudflare --dry-run=client -o yaml | kubectl apply -f -
-                            kubectl create secret generic tunnel-credentials \
-                                --namespace cloudflare \
-                                --from-literal=token="\${CLOUDFLARE_TOKEN}" \
-                                --dry-run=client -o yaml | kubectl apply -f -
-                        """
-                        // Apply the rest of the YAML (Namespace and Deployment)
-                        sh "kubectl apply -f cloudflare-tunnel.yaml"
-                        // Wait for rollout
-                        sh "kubectl rollout status deployment/cloudflared -n cloudflare --timeout=1m"
-                    }
-                }
-            }
-        }
-
         stage('Final Health Check') {
             steps {
                 sh '''
@@ -319,7 +297,6 @@ pipeline {
                 echo "🔗 Triggered by: GitHub push"
                 echo "📦 Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                 echo "🌐 Internal access: http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
-                echo "🌐 External access: https://auth.pokharelsujan.info.np (via Cloudflare Tunnel)"
                 echo "📊 Final system status:"
                 kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service --no-headers -o custom-columns="NAME:.metadata.name,STATUS:.status.phase" || true
                 free -h | head -2 || echo "Memory info not available"
@@ -327,3 +304,4 @@ pipeline {
         }
     }
 }
+
