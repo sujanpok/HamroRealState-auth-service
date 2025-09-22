@@ -19,11 +19,11 @@ spec:
       labels:
         app: cloudflared
     spec:
-      nodeSelector:                    # ✅ Moved to pod spec level
+      nodeSelector:
         kubernetes.io/arch: arm64
       containers:
       - name: cloudflared
-        image: cloudflare/cloudflared:latest-arm64
+        image: cloudflare/cloudflared:latest    # ✅ Remove -arm64 suffix
         args:
         - tunnel
         - --no-autoupdate
@@ -35,11 +35,11 @@ spec:
             secretKeyRef:
               name: tunnel-credentials
               key: token
-        resources:                     # ✅ Moved inside container
+        resources:
           limits:
             cpu: 100m
             memory: 128Mi
           requests:
             cpu: 50m
             memory: 64Mi
-        # ✅ No health checks to avoid complexity
+        # ✅ Remove problematic health checks for now
