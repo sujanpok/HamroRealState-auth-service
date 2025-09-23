@@ -23,6 +23,11 @@ spec:
         app: {{ .Values.appName | default "auth-service" }}
         color: {{ .Values.color }}
     spec:
+      # DNS FIX: Add these lines to fix networking issues
+      hostNetwork: true
+      dnsPolicy: Default
+      # END DNS FIX
+      
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
@@ -33,32 +38,35 @@ spec:
       {{- end }}
       terminationGracePeriodSeconds: 30
       containers:
-      - name: {{ .Values.appName | default "auth-service" }}
-        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
-        ports:
-        - containerPort: {{ .Values.service.targetPort }}
-        envFrom:
-        - configMapRef:
-            name: {{ .Release.Name }}-config
-        - secretRef:
-            name: {{ .Release.Name }}-secret
-        {{- if .Values.livenessProbe }}
-        livenessProbe:
-          {{- toYaml .Values.livenessProbe | nindent 10 }}
-        {{- end }}
-        {{- if .Values.readinessProbe }}
-        readinessProbe:
-          {{- toYaml .Values.readinessProbe | nindent 10 }}
-        {{- end }}
-        {{- if .Values.resources }}
-        resources:
-          {{- toYaml .Values.resources | nindent 10 }}
-        {{- end }}
-        lifecycle:
-          preStop:
-            exec:
-              command:
-              - /bin/sh
-              - -c
-              - sleep 10
+        - name: {{ .Values.appName | default "auth-service" }}
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+              # DNS FIX: When using hostNetwork, specify hostPort
+              hostPort: {{ .Values.service.targetPort }}
+              # END DNS FIX
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 10 }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 10 }}
+          {{- end }}
+          {{- if .Values.resources }}
+          resources:
+            {{- toYaml .Values.resources | nindent 10 }}
+          {{- end }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - sleep 10
