@@ -131,8 +131,8 @@ pipeline {
                     string(credentialsId: 'auth-db-password', variable: 'DB_PASSWORD'),
                     string(credentialsId: 'auth-database-url', variable: 'DATABASE_URL'),
                     string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET'),
-                    string(credentialsId: 'firebase_client_id', variable: 'FIREBASE_CLIENT_ID')
-                    string(credentialsId: 'firebase_private_key', variable: 'FIREBASE_PRIVATE_KEY')
+                    string(credentialsId: 'firebase_client_id', variable: 'FIREBASE_CLIENT_ID'),
+                    string(credentialsId: 'firebase_private_key', variable: 'FIREBASE_PRIVATE_KEY'),
                     string(credentialsId: 'firebase_database_url', variable: 'FIREBASE_DATABASE_URL')
                 ]) {
                     script {
