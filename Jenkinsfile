@@ -154,10 +154,7 @@ pipeline {
                                 --set secrets.FIREBASE_CLIENT_ID="${FIREBASE_CLIENT_ID}" \
                                 --set secrets.FIREBASE_PRIVATE_KEY="${FIREBASE_PRIVATE_KEY}" \
                                 --set secrets.FIREBASE_DATABASE_URL="${FIREBASE_DATABASE_URL}" \
-                                --namespace ${K3S_NAMESPACE} \
-                                --atomic \
-                                --cleanup-on-fail \
-                                --wait --timeout 5m
+                                --namespace ${K3S_NAMESPACE}
                         '''
                         
                         // Wait for rollout
