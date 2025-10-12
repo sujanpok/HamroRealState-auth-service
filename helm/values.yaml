@@ -1,24 +1,28 @@
 replicaCount: 1
 
+appName: auth-service
+
 image:
-  repository: yourdockerhub/auth-service  # Update to your Docker Hub repo
+  repository: sujan1234ray/auth-service
   pullPolicy: IfNotPresent
   tag: "latest"
 
-color: blue  # Default; Jenkins sets to blue or green for blue-green
+color: blue
 
 service:
-  type: LoadBalancer  # For MetalLB local IP assignment
+  type: LoadBalancer
   port: 80
-  targetPort: 3001  # Matches your PORT=3001 from .env/server.js
+  targetPort: 3001
+  serviceName: auth-service
+  loadBalancerIP: 192.168.1.200  # Fixed external IP
+  nodePort: 30080                # Fixed NodePort (optional)
+  
 
-ingress:
-  enabled: false  # Disable if using Cloudflare Tunnel
-
-env:  # Non-sensitive vars (injected via ConfigMap)
-  CORS_ORIGINS: "http://localhost:4200,https://hamrorealstate.store,https://web.pokharelsujan.info.np/"
+# Environment variables for ConfigMap
+env:
+  CORS_ORIGINS: "http://localhost:4200,https://pokharelsujan.info.np"
   PORT: "3001"
-  HOST: "localhost"
+  HOST: "0.0.0.0"
   DB_MODE: "cloud"
   DB_HOST: "postgres"
   DB_PORT: "5432"
@@ -29,13 +33,15 @@ env:  # Non-sensitive vars (injected via ConfigMap)
   USER_PROFILE: "USER_PROFILE_TABLE"
   CLIENT_ID: "539011910849-qk1h6i9c5t9d0bn094jaa9q6rt2k7amu.apps.googleusercontent.com"
   REDIRECT_URI: "http://localhost:8000/oauth2callback"
-  JWT_EXPIRATION: "10m"  # From .env
+  JWT_EXPIRATION: "10m"
+  NODE_ENV: "production" # Will be overridden by Jenkins
 
-secrets:  # Sensitive vars (injected via Secret; provide in plaintext here—Helm encodes them)
-  JWT_SECRET: "<inject-from-jenkins>"
-  DB_PASSWORD: "<inject-from-jenkins>"
-  DATABASE_URL: "<inject-from-jenkins>"
-  CLIENT_SECRET: "<inject-from-jenkins>"
+# Sensitive variables for Secret
+secrets:
+  JWT_SECRET: ""
+  DB_PASSWORD: ""
+  DATABASE_URL: ""
+  CLIENT_SECRET: ""
 
 resources:
   limits:
@@ -45,7 +51,32 @@ resources:
     cpu: 250m
     memory: 256Mi
 
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+imagePullSecrets:
+- name: docker-hub-credentials
+
 nodeSelector:
-  kubernetes.io/arch: arm64  # For Raspberry Pi
+  kubernetes.io/arch: arm64
+
 tolerations: []
+
 affinity: {}

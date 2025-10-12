@@ -7,10 +7,31 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const logger = require('../logger');
 const { OAuth2Client } = require('google-auth-library');
+const admin = require('firebase-admin');
 
 const { schema, tables } = config.db;
 // Initialize Google OAuth2 client
 const client = new OAuth2Client(process.env.CLIENT_ID);
+
+// 🔥 Initialize Firebase Admin SDK using environment variables
+if (!admin.apps.length) {
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_ID,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+      databaseURL: process.env.FIREBASE_DATABASE_URL
+    });
+    logger.info('Firebase Admin SDK initialized successfully');
+  } catch (error) {
+    logger.error('Firebase initialization error:', error.message);
+    throw new Error('Failed to initialize Firebase Admin SDK');
+  }
+}
+
+const db = admin.database();
 
 // Centralized table and column names
 const LOGIN_TABLE = `"${schema}"."${tables.login}"`;
@@ -22,6 +43,7 @@ const LOGIN_COLUMNS = {
   USER_TYPE: 'USER_TYPE',
   IS_ACTIVE: 'IS_ACTIVE',
   USER_ID: 'USER_ID',
+  AUTH_PROVIDER: 'AUTH_PROVIDER', // 🆕 NEW - track login method
 };
 
 const PROFILE_COLUMNS = {
@@ -41,7 +63,6 @@ const USER_TYPES = {
   AGENT: '3',
 };
 
-// Add constants for boolean values as strings
 const ACTIVE_STATUS = {
   ACTIVE: '1',
   INACTIVE: '0'
@@ -54,9 +75,11 @@ const ERROR_CODES = {
   WRONG_PASSWORD: 'ERR004',
   DATABASE_ERROR: 'ERR005',
   JWT_ERROR: 'ERR006',
+  GOOGLE_ONLY_ACCOUNT: 'ERR007',
+  NO_PASSWORD_SET: 'ERR008',
 };
 
-// Gender conversion function to handle varchar(1) constraint
+// Gender conversion function
 const convertGender = (gender) => {
   if (!gender) return null;
   
@@ -67,11 +90,10 @@ const convertGender = (gender) => {
     return 'F';
   }
   
-  // Return first character as fallback, or null if invalid
   return gender.length > 0 ? gender.charAt(0).toUpperCase() : null;
 };
 
-// Register new user
+// ========== REGISTER USER ==========
 exports.registerUser = async (data) => {
   const { full_name, gender, email, password } = data;
 
@@ -86,21 +108,39 @@ exports.registerUser = async (data) => {
     };
   }
 
-  const dbClient = await pool.connect(); // Get a client from the pool
+  const dbClient = await pool.connect();
   try {
-    await dbClient.query('BEGIN'); // Start transaction
+    await dbClient.query('BEGIN');
 
+    // Check if user exists with AUTH_PROVIDER
     const userCheckQuery = `
-      SELECT p."${PROFILE_COLUMNS.EMAIL}"
-      FROM ${LOGIN_TABLE} u
+      SELECT 
+        p."${PROFILE_COLUMNS.EMAIL}",
+        l."${LOGIN_COLUMNS.AUTH_PROVIDER}"
+      FROM ${LOGIN_TABLE} l
       LEFT JOIN ${USER_PROFILE_TABLE} p 
-        ON u."${LOGIN_COLUMNS.USER_ID}" = p."${PROFILE_COLUMNS.USER_ID}"
+        ON l."${LOGIN_COLUMNS.USER_ID}" = p."${PROFILE_COLUMNS.USER_ID}"
       WHERE p."${PROFILE_COLUMNS.EMAIL}" = $1
     `;
     const existingUser = await dbClient.query(userCheckQuery, [email]);
 
     if (existingUser.rows.length > 0) {
+      const authProvider = existingUser.rows[0][LOGIN_COLUMNS.AUTH_PROVIDER];
+      
       await dbClient.query('ROLLBACK');
+      
+      // Different messages based on auth provider
+      if (authProvider === 'google') {
+        logger.info(`Registration attempt for Google-registered email: ${email}`);
+        return {
+          status: 400,
+          data: {
+            error: 'This email is registered with Google. Please use "Login with Google" or contact support to add password.',
+            code: 'GOOGLE_ACCOUNT_EXISTS',
+          },
+        };
+      }
+      
       logger.info(`Duplicate registration attempt for email: ${email}`);
       return {
         status: 400,
@@ -113,21 +153,23 @@ exports.registerUser = async (data) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Insert with AUTH_PROVIDER
     const insertLoginUserQuery = `
       INSERT INTO ${LOGIN_TABLE} 
-      ("${LOGIN_COLUMNS.USERNAME}", "${LOGIN_COLUMNS.PASSWORD}", "${LOGIN_COLUMNS.USER_TYPE}", "${LOGIN_COLUMNS.IS_ACTIVE}")
-      VALUES ($1, $2, $3, $4) RETURNING "${LOGIN_COLUMNS.USER_ID}"
+      ("${LOGIN_COLUMNS.USERNAME}", "${LOGIN_COLUMNS.PASSWORD}", "${LOGIN_COLUMNS.USER_TYPE}", 
+       "${LOGIN_COLUMNS.IS_ACTIVE}", "${LOGIN_COLUMNS.AUTH_PROVIDER}")
+      VALUES ($1, $2, $3, $4, $5) RETURNING "${LOGIN_COLUMNS.USER_ID}"
     `;
     const userRes = await dbClient.query(insertLoginUserQuery, [
       email,
       hashedPassword,
       USER_TYPES.TENANT,
-      ACTIVE_STATUS.ACTIVE, // Changed from true to '1'
+      ACTIVE_STATUS.ACTIVE,
+      'local' // 🆕 Set auth provider to 'local'
     ]);
 
     const userId = userRes.rows[0][LOGIN_COLUMNS.USER_ID];
 
-    // Ensure that userId is correctly fetched and not null
     if (!userId) {
       logger.error('User ID not returned from login insert');
       await dbClient.query('ROLLBACK');
@@ -140,10 +182,7 @@ exports.registerUser = async (data) => {
       };
     }
 
-    // Convert gender to single character
     const convertedGender = convertGender(gender);
-    
-    // Log for debugging
     logger.info(`Converting gender: "${gender}" -> "${convertedGender}"`);
 
     const insertProfileQuery = `
@@ -158,16 +197,34 @@ exports.registerUser = async (data) => {
       null,
       email,
       null,
-      convertedGender, // Use converted gender
+      convertedGender,
       null,
     ]);
+
+    // 🔥 CREATE USER IN FIREBASE
+    try {
+      await db.ref(`users/${userId}`).set({
+        email: email,
+        displayName: full_name,
+        photoURL: '',
+        phone: '',
+        online: false,
+        lastSeen: Date.now(),
+        createdAt: Date.now(),
+        userType: USER_TYPES.TENANT,
+        authProvider: 'local' // 🆕 Track in Firebase
+      });
+      logger.info(`Firebase user created for userId: ${userId}`);
+    } catch (fbError) {
+      logger.error('Firebase user creation failed:', fbError.message);
+    }
     
-    await dbClient.query('COMMIT'); // Commit the transaction if both queries succeed
+    await dbClient.query('COMMIT');
 
     logger.info(`User registered with email: ${email}`);
     return { status: 201, data: { message: 'User registered successfully' } };
   } catch (error) {
-    await dbClient.query('ROLLBACK'); // Rollback in case of any error
+    await dbClient.query('ROLLBACK');
     logger.error('Database error during registration:', {
       message: error.message,
       stack: error.stack,
@@ -178,11 +235,11 @@ exports.registerUser = async (data) => {
       data: { error: 'Database error', code: ERROR_CODES.DATABASE_ERROR },
     };
   } finally {
-    dbClient.release(); // Always release the client back to the pool
+    dbClient.release();
   }
 };
 
-// Login user
+// ========== LOGIN USER ==========
 exports.loginUser = async (data) => {
   const expiresIn = process.env.JWT_EXPIRATION;
   const { email, password } = data;
@@ -197,10 +254,20 @@ exports.loginUser = async (data) => {
 
   try {
     const query = `
-      SELECT * FROM ${LOGIN_TABLE} 
-      WHERE "${LOGIN_COLUMNS.IS_ACTIVE}" = $1 AND "${LOGIN_COLUMNS.USERNAME}" = $2
+      SELECT 
+        l."${LOGIN_COLUMNS.USER_ID}",
+        l."${LOGIN_COLUMNS.USERNAME}",
+        l."${LOGIN_COLUMNS.PASSWORD}",
+        l."${LOGIN_COLUMNS.USER_TYPE}",
+        l."${LOGIN_COLUMNS.AUTH_PROVIDER}",
+        p."${PROFILE_COLUMNS.FULL_NAME}",
+        p."${PROFILE_COLUMNS.PHONE_NUMBER}",
+        p."${PROFILE_COLUMNS.PROFILE_IMAGE}"
+      FROM ${LOGIN_TABLE} l
+      LEFT JOIN ${USER_PROFILE_TABLE} p ON l."${LOGIN_COLUMNS.USER_ID}" = p."${PROFILE_COLUMNS.USER_ID}"
+      WHERE l."${LOGIN_COLUMNS.IS_ACTIVE}" = $1 AND l."${LOGIN_COLUMNS.USERNAME}" = $2
     `;
-    const result = await pool.query(query, [ACTIVE_STATUS.ACTIVE, email]); // Changed from true to '1'
+    const result = await pool.query(query, [ACTIVE_STATUS.ACTIVE, email]);
     const user = result.rows[0];
 
     if (!user) {
@@ -208,6 +275,33 @@ exports.loginUser = async (data) => {
       return {
         status: 401,
         data: { error: 'Invalid email or password', code: ERROR_CODES.USER_NOT_FOUND },
+      };
+    }
+
+    // 🆕 CHECK AUTH PROVIDER
+    const authProvider = user[LOGIN_COLUMNS.AUTH_PROVIDER];
+    
+    // If user registered with Google only, password will be NULL
+    if (authProvider === 'google' && !user[LOGIN_COLUMNS.PASSWORD]) {
+      logger.warn(`Password login attempt for Google-only account: ${email}`);
+      return {
+        status: 401,
+        data: { 
+          error: 'This account was created with Google. Please use "Login with Google" button.',
+          code: ERROR_CODES.GOOGLE_ONLY_ACCOUNT,
+        },
+      };
+    }
+
+    // Verify password
+    if (!user[LOGIN_COLUMNS.PASSWORD]) {
+      logger.warn(`No password set for account: ${email}`);
+      return {
+        status: 401,
+        data: { 
+          error: 'No password set for this account.',
+          code: ERROR_CODES.NO_PASSWORD_SET,
+        },
       };
     }
 
@@ -220,7 +314,38 @@ exports.loginUser = async (data) => {
       };
     }
 
-    const token = jwt.sign({ userId: user[LOGIN_COLUMNS.USER_ID] }, process.env.JWT_SECRET, { expiresIn });
+    const userId = user[LOGIN_COLUMNS.USER_ID];
+
+    // 🔥 CHECK/UPDATE FIREBASE USER
+    try {
+      const firebaseUserRef = db.ref(`users/${userId}`);
+      const snapshot = await firebaseUserRef.once('value');
+      
+      if (!snapshot.exists()) {
+        await firebaseUserRef.set({
+          email: email,
+          displayName: user[PROFILE_COLUMNS.FULL_NAME] || '',
+          photoURL: user[PROFILE_COLUMNS.PROFILE_IMAGE] || '',
+          phone: user[PROFILE_COLUMNS.PHONE_NUMBER] || '',
+          online: true,
+          lastSeen: Date.now(),
+          createdAt: Date.now(),
+          userType: user[LOGIN_COLUMNS.USER_TYPE],
+          authProvider: authProvider || 'local'
+        });
+        logger.info(`Firebase user created on login for userId: ${userId}`);
+      } else {
+        await firebaseUserRef.update({
+          online: true,
+          lastSeen: Date.now()
+        });
+        logger.info(`Firebase user status updated for userId: ${userId}`);
+      }
+    } catch (fbError) {
+      logger.error('Firebase update failed on login:', fbError.message);
+    }
+
+    const token = jwt.sign({ userId: userId }, process.env.JWT_SECRET, { expiresIn });
 
     logger.info(`User logged in: ${email}`);
     return { status: 200, data: { message: 'Login successful', token } };
@@ -236,17 +361,19 @@ exports.loginUser = async (data) => {
   }
 };
 
-// Get profile
+// ========== GET PROFILE ==========
 exports.getUserProfile = async (userId) => {
   const query = `
     SELECT 
+      p."${PROFILE_COLUMNS.USER_ID}",  -- 🆕 ADD THIS LINE
       p."${PROFILE_COLUMNS.FULL_NAME}", 
       p."${PROFILE_COLUMNS.PHONE_NUMBER}", 
       p."${PROFILE_COLUMNS.EMAIL}",
       p."${PROFILE_COLUMNS.ADDRESS}", 
       p."${PROFILE_COLUMNS.GENDER}", 
       p."${PROFILE_COLUMNS.PROFILE_IMAGE}",
-      l."${LOGIN_COLUMNS.USER_TYPE}"
+      l."${LOGIN_COLUMNS.USER_TYPE}",
+      l."${LOGIN_COLUMNS.AUTH_PROVIDER}"
     FROM ${USER_PROFILE_TABLE} p
     JOIN ${LOGIN_TABLE} l ON p."${PROFILE_COLUMNS.USER_ID}" = l."${LOGIN_COLUMNS.USER_ID}"
     WHERE p."${PROFILE_COLUMNS.USER_ID}" = $1
@@ -266,10 +393,10 @@ exports.getUserProfile = async (userId) => {
   }
 };
 
+// ========== GOOGLE LOGIN ==========
 exports.loginWithGoogle = async (id_token) => {
   const dbClient = await pool.connect();
   try {
-    // 1. Verify the Google id_token
     const ticket = await client.verifyIdToken({
       idToken: id_token,
       audience: process.env.CLIENT_ID,
@@ -283,57 +410,106 @@ exports.loginWithGoogle = async (id_token) => {
     const email = payload.email;
     const full_name = payload.name || "";
     const picture = payload.picture || null;
-    const gender = convertGender(payload.gender); // Convert gender here
+    const gender = convertGender(payload.gender);
 
-    // Start transaction
     await dbClient.query('BEGIN');
 
-    // 2. Check if user exists
+    // Check if user exists with AUTH_PROVIDER
     const userCheckRes = await dbClient.query(
-      `SELECT u."${LOGIN_COLUMNS.USER_ID}", u."${LOGIN_COLUMNS.USER_TYPE}"
-         FROM ${LOGIN_TABLE} u
-         LEFT JOIN ${USER_PROFILE_TABLE} p ON u."${LOGIN_COLUMNS.USER_ID}" = p."${PROFILE_COLUMNS.USER_ID}"
-         WHERE p."${PROFILE_COLUMNS.EMAIL}" = $1`,
+      `SELECT 
+        u."${LOGIN_COLUMNS.USER_ID}", 
+        u."${LOGIN_COLUMNS.USER_TYPE}",
+        u."${LOGIN_COLUMNS.AUTH_PROVIDER}"
+       FROM ${LOGIN_TABLE} u
+       LEFT JOIN ${USER_PROFILE_TABLE} p ON u."${LOGIN_COLUMNS.USER_ID}" = p."${PROFILE_COLUMNS.USER_ID}"
+       WHERE p."${PROFILE_COLUMNS.EMAIL}" = $1`,
       [email]
     );
     
-    let userId, userType;
+    let userId, userType, authProvider;
     
     if (userCheckRes.rows.length === 0) {
-      // 3. If not exists, create new login and profile
+      // 🆕 NEW USER - Create with Google auth
       const insertLoginRes = await dbClient.query(
-        `INSERT INTO ${LOGIN_TABLE} ("${LOGIN_COLUMNS.USERNAME}", "${LOGIN_COLUMNS.PASSWORD}", "${LOGIN_COLUMNS.USER_TYPE}", "${LOGIN_COLUMNS.IS_ACTIVE}")
-         VALUES ($1, $2, $3, $4) RETURNING "${LOGIN_COLUMNS.USER_ID}", "${LOGIN_COLUMNS.USER_TYPE}"`,
-        [email, null, USER_TYPES.TENANT, ACTIVE_STATUS.ACTIVE] // Changed from true to '1'
+        `INSERT INTO ${LOGIN_TABLE} 
+         ("${LOGIN_COLUMNS.USERNAME}", "${LOGIN_COLUMNS.PASSWORD}", "${LOGIN_COLUMNS.USER_TYPE}", 
+          "${LOGIN_COLUMNS.IS_ACTIVE}", "${LOGIN_COLUMNS.AUTH_PROVIDER}")
+         VALUES ($1, $2, $3, $4, $5) 
+         RETURNING "${LOGIN_COLUMNS.USER_ID}", "${LOGIN_COLUMNS.USER_TYPE}"`,
+        [email, null, USER_TYPES.TENANT, ACTIVE_STATUS.ACTIVE, 'google']
       );
       
       userId = insertLoginRes.rows[0][LOGIN_COLUMNS.USER_ID];
       userType = insertLoginRes.rows[0][LOGIN_COLUMNS.USER_TYPE];
+      authProvider = 'google';
       
       await dbClient.query(
-        `INSERT INTO ${USER_PROFILE_TABLE} ("${PROFILE_COLUMNS.USER_ID}", "${PROFILE_COLUMNS.FULL_NAME}", "${PROFILE_COLUMNS.PHONE_NUMBER}", "${PROFILE_COLUMNS.EMAIL}", "${PROFILE_COLUMNS.ADDRESS}", "${PROFILE_COLUMNS.GENDER}", "${PROFILE_COLUMNS.PROFILE_IMAGE}")
+        `INSERT INTO ${USER_PROFILE_TABLE} 
+         ("${PROFILE_COLUMNS.USER_ID}", "${PROFILE_COLUMNS.FULL_NAME}", "${PROFILE_COLUMNS.PHONE_NUMBER}", 
+          "${PROFILE_COLUMNS.EMAIL}", "${PROFILE_COLUMNS.ADDRESS}", "${PROFILE_COLUMNS.GENDER}", "${PROFILE_COLUMNS.PROFILE_IMAGE}")
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [userId, full_name, null, email, null, gender, picture] // gender is already converted
+        [userId, full_name, null, email, null, gender, picture]
       );
+
+      // 🔥 CREATE FIREBASE USER
+      try {
+        await db.ref(`users/${userId}`).set({
+          email: email,
+          displayName: full_name,
+          photoURL: picture || '',
+          phone: '',
+          online: true,
+          lastSeen: Date.now(),
+          createdAt: Date.now(),
+          userType: userType,
+          authProvider: 'google'
+        });
+        logger.info(`Firebase user created for Google login userId: ${userId}`);
+      } catch (fbError) {
+        logger.error('Firebase user creation failed for Google login:', fbError.message);
+      }
     } else {
+      // 🆕 EXISTING USER
       userId = userCheckRes.rows[0][LOGIN_COLUMNS.USER_ID];
       userType = userCheckRes.rows[0][LOGIN_COLUMNS.USER_TYPE];
+      authProvider = userCheckRes.rows[0][LOGIN_COLUMNS.AUTH_PROVIDER];
+
+      // If user registered with local (email/password), update to 'both'
+      if (authProvider === 'local') {
+        await dbClient.query(
+          `UPDATE ${LOGIN_TABLE} 
+           SET "${LOGIN_COLUMNS.AUTH_PROVIDER}" = 'both'
+           WHERE "${LOGIN_COLUMNS.USER_ID}" = $1`,
+          [userId]
+        );
+        authProvider = 'both';
+        logger.info(`Updated auth provider to 'both' for userId: ${userId}`);
+      }
+
+      // 🔥 UPDATE FIREBASE
+      try {
+        await db.ref(`users/${userId}`).update({
+          online: true,
+          lastSeen: Date.now(),
+          authProvider: authProvider
+        });
+        logger.info(`Firebase status updated for Google login userId: ${userId}`);
+      } catch (fbError) {
+        logger.error('Firebase update failed for Google login:', fbError.message);
+      }
     }
 
-    // Commit
     await dbClient.query('COMMIT');
 
-    // 4. Issue JWT as usual
     const token = jwt.sign(
       { userId, user_type: userType, email },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRATION || "12h" }
     );
 
-    logger.info(`User logged in with Google: ${email}`);
+    logger.info(`User logged in with Google: ${email}, auth_provider: ${authProvider}`);
     return { status: 200, data: { message: "Google login successful", token } };
   } catch (err) {
-    // Rollback
     try { 
       await dbClient.query('ROLLBACK'); 
     } catch (e) { 

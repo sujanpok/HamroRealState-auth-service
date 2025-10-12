@@ -2,8 +2,9 @@ version: '3.8'
 
 services:
   frontend:
-    image: "${DOCKER_HUB_USR}/frontend-app:latest"
-    container_name: frontend
+    build: .  
+    image: "${DOCKER_HUB_USR}/auth-service:latest"
+    container_name: auth-microservice
     restart: always
     ports:
-      - "4200:80"
+      - "3001:80"

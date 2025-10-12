@@ -30,13 +30,25 @@ app.get('/', (req, res) => {
   res.send('👋 Hello! from your Raspberry Pi! Api service running.');
 });
 
+// ✅ ADD THIS: Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    port: process.env.PORT || 3001,
+    host: process.env.HOST || '0.0.0.0'
+  });
+});
+
 // ✅ Routes
 app.use('/', authRoutes);
 
 // ✅ Start Server
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0'; // fallback to 0.0.0.0 for Docker/RPi
+const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
   logger.info(`🚀 Server is running at http://${HOST}:${PORT}`);
+  // ✅ ADD THIS: Log environment variables for debugging
+  logger.info(`📝 Environment: NODE_ENV=${process.env.NODE_ENV}, PORT=${PORT}, HOST=${HOST}`);
 });
