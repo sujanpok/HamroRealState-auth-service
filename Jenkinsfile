@@ -130,7 +130,10 @@ pipeline {
                     string(credentialsId: 'auth-jwt-secret', variable: 'JWT_SECRET'),
                     string(credentialsId: 'auth-db-password', variable: 'DB_PASSWORD'),
                     string(credentialsId: 'auth-database-url', variable: 'DATABASE_URL'),
-                    string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET')
+                    string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET'),
+                    string(credentialsId: 'firebase_client_id', variable: 'FIREBASE_CLIENT_ID')
+                    string(credentialsId: 'firebase_private_key', variable: 'FIREBASE_PRIVATE_KEY')
+                    string(credentialsId: 'firebase_database_url', variable: 'FIREBASE_DATABASE_URL')
                 ]) {
                     script {
                         echo "🔵 Starting blue-green deployment to k3s"
@@ -148,7 +151,13 @@ pipeline {
                                 --set secrets.DB_PASSWORD="${DB_PASSWORD}" \
                                 --set secrets.DATABASE_URL="${DATABASE_URL}" \
                                 --set secrets.CLIENT_SECRET="${CLIENT_SECRET}" \
-                                --namespace ${K3S_NAMESPACE}
+                                --set secrets.FIREBASE_CLIENT_ID="${FIREBASE_CLIENT_ID}" \
+                                --set secrets.FIREBASE_PRIVATE_KEY="${FIREBASE_PRIVATE_KEY}" \
+                                --set secrets.FIREBASE_DATABASE_URL="${FIREBASE_DATABASE_URL}" \
+                                --namespace ${K3S_NAMESPACE} \
+                                --atomic \
+                                --cleanup-on-fail \
+                                --wait --timeout 5m
                         '''
                         
                         // Wait for rollout
