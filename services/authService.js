@@ -24,14 +24,25 @@ if (!admin.apps.length) {
       }),
       databaseURL: process.env.FIREBASE_DATABASE_URL
     });
-    logger.info('Firebase Admin SDK initialized successfully');
+    logger.info('✅ Firebase Admin SDK initialized successfully');
   } catch (error) {
-    logger.error('Firebase initialization error:', error.message);
-    throw new Error('Failed to initialize Firebase Admin SDK');
+    logger.error('❌ Firebase initialization error:', error.message);
+    logger.warn('⚠️ App will continue without Firebase');
+    // ✅ NO throw - app continues even if Firebase fails
   }
 }
 
-const db = admin.database();
+// ✅ Safe database export (may be undefined if Firebase failed)
+let db;
+try {
+  if (admin.apps.length > 0) {
+    db = admin.database();
+  }
+} catch (error) {
+  logger.error('Firebase database not available:', error.message);
+}
+
+module.exports = db;
 
 // Centralized table and column names
 const LOGIN_TABLE = `"${schema}"."${tables.login}"`;
