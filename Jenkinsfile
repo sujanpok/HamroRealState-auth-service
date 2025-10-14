@@ -132,7 +132,8 @@ pipeline {
                     string(credentialsId: 'auth-jwt-secret', variable: 'JWT_SECRET'),
                     string(credentialsId: 'auth-db-password', variable: 'DB_PASSWORD'),
                     string(credentialsId: 'auth-database-url', variable: 'DATABASE_URL'),
-                    string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET')
+                    string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET'),
+                    string(credentialsId: 'firebase_database_url', variable: 'FIREBASE_DATABASE_URL')
                 ]) {
                     script {
                         echo "🔵 Deploying NEW version (${NEW_COLOR}) - OLD version (${CURRENT_ACTIVE}) keeps running"
@@ -150,6 +151,7 @@ pipeline {
                                 --set secrets.DB_PASSWORD="${DB_PASSWORD}" \
                                 --set secrets.DATABASE_URL="${DATABASE_URL}" \
                                 --set secrets.CLIENT_SECRET="${CLIENT_SECRET}" \
+                                --set secrets.FIREBASE_DATABASE_URL="${FIREBASE_DATABASE_URL}" \
                                 --namespace ${K3S_NAMESPACE}
                             
                             echo "✅ Helm deployment completed"
