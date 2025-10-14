@@ -224,22 +224,82 @@ pipeline {
             }
         }
 
-        stage('Scale Down Old Deployment') {
+        stage('Keep 2 Deployments (Active + Backup)') {
             steps {
                 script {
-                    echo "⬇️ Scaling down old deployment (${OLD_RELEASE}) to 0 replicas..."
+                    echo "🧹 Smart Cleanup: Keep CURRENT + 1 BACKUP deployment"
                     sh """
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo "📊 Before cleanup:"
+                        kubectl get deployments -n ${K3S_NAMESPACE} -l app=auth-service \
+                            -o custom-columns="NAME:.metadata.name,REPLICAS:.spec.replicas,AVAILABLE:.status.availableReplicas,IMAGE:.spec.template.spec.containers[0].image,AGE:.metadata.creationTimestamp" || true
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        
+                        echo ""
+                        echo "📉 Step 1: Scale down old deployment to 0 replicas (backup)"
+                        
+                        # Scale down the previous deployment
                         if kubectl get deployment ${OLD_RELEASE} -n ${K3S_NAMESPACE} 2>/dev/null; then
-                            echo "📉 Scaling ${OLD_RELEASE} to 0 replicas (keeping for instant rollback)"
-
-                            # Scale deployment to 0 (keeps deployment but no pods running)
+                            echo "   Scaling ${OLD_RELEASE} to 0 replicas..."
                             kubectl scale deployment ${OLD_RELEASE} --replicas=0 -n ${K3S_NAMESPACE}
-
-                            echo "✅ Old deployment scaled down (ready for instant rollback)"
-                            echo "🔄 To rollback: kubectl scale deployment ${OLD_RELEASE} --replicas=1 -n ${K3S_NAMESPACE}"
+                            echo "   ✅ ${OLD_RELEASE} is now backup (0 replicas, ready for instant rollback)"
                         else
-                            echo "ℹ️ No old deployment to scale down"
+                            echo "   ℹ️ No old deployment to scale down"
                         fi
+                        
+                        echo ""
+                        echo "🗑️ Step 2: Delete deployments older than last 2"
+                        
+                        # Get all deployments sorted by creation time (newest first)
+                        ALL_DEPLOYMENTS=\$(kubectl get deployments -n ${K3S_NAMESPACE} \
+                            -l app=auth-service \
+                            --sort-by=.metadata.creationTimestamp \
+                            -o jsonpath='{.items[*].metadata.name}' | \
+                            tr ' ' '\\n' | \
+                            tac)
+                        
+                        # Count deployments
+                        DEPLOYMENT_COUNT=\$(echo "\$ALL_DEPLOYMENTS" | grep -c '^' || echo 0)
+                        echo "   Found \$DEPLOYMENT_COUNT auth-service deployment(s)"
+                        
+                        # Skip first 2 (current + backup), delete rest
+                        if [ \$DEPLOYMENT_COUNT -gt 2 ]; then
+                            echo "   Deleting \$((\$DEPLOYMENT_COUNT - 2)) old deployment(s)..."
+                            echo "\$ALL_DEPLOYMENTS" | tail -n +3 | while read deployment; do
+                                if [ -n "\$deployment" ]; then
+                                    echo ""
+                                    echo "   🗑️ Deleting old deployment: \$deployment"
+                                    
+                                    # Delete deployment and resources
+                                    kubectl delete deployment \$deployment -n ${K3S_NAMESPACE} --ignore-not-found=true
+                                    kubectl delete configmap \${deployment}-config -n ${K3S_NAMESPACE} --ignore-not-found=true
+                                    kubectl delete secret \${deployment}-secret -n ${K3S_NAMESPACE} --ignore-not-found=true
+                                    kubectl delete pdb \${deployment}-pdb -n ${K3S_NAMESPACE} --ignore-not-found=true
+                                    
+                                    echo "   ✅ Deleted: \$deployment"
+                                fi
+                            done
+                        else
+                            echo "   ℹ️ No old deployments to delete (total: \$DEPLOYMENT_COUNT)"
+                        fi
+                        
+                        echo ""
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo "✅ Cleanup complete!"
+                        echo "📊 After cleanup (keeping 2 deployments):"
+                        kubectl get deployments -n ${K3S_NAMESPACE} -l app=auth-service \
+                            -o custom-columns="NAME:.metadata.name,STATUS:.status.conditions[?(@.type=='Available')].status,REPLICAS:.spec.replicas,AVAILABLE:.status.availableReplicas,IMAGE:.spec.template.spec.containers[0].image,AGE:.metadata.creationTimestamp" || true
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        
+                        echo ""
+                        echo "🎯 Current: ${NEW_RELEASE} (1 replica, serving traffic)"
+                        echo "🛡️ Backup: ${OLD_RELEASE} (0 replicas, ready for instant rollback)"
+                        echo ""
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo "🔄 Instant Rollback Command (5-10 seconds):"
+                        echo "   kubectl scale deployment ${OLD_RELEASE} --replicas=1 -n ${K3S_NAMESPACE}"
+                        echo "   kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${CURRENT_ACTIVE}\"}}}'"
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                     """
                 }
             }
@@ -311,14 +371,30 @@ pipeline {
         
         success {
             sh '''
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 echo "✅ DEPLOYMENT SUCCESSFUL!"
-                echo "🎯 Active version: ${NEW_COLOR}"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "🎯 Active: ${NEW_RELEASE} (${NEW_COLOR})"
+                echo "🛡️ Backup: ${OLD_RELEASE} (${CURRENT_ACTIVE}) - 0 replicas"
                 echo "📦 Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                echo "🌐 Service: http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
+                echo "🌐 Service: ${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
+                echo ""
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "🔄 INSTANT ROLLBACK (if needed):"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "# Step 1: Scale up backup"
+                echo "kubectl scale deployment ${OLD_RELEASE} --replicas=1 -n ${K3S_NAMESPACE}"
+                echo ""
+                echo "# Step 2: Wait for ready (5-10 sec)"
+                echo "kubectl rollout status deployment/${OLD_RELEASE} -n ${K3S_NAMESPACE}"
+                echo ""
+                echo "# Step 3: Switch traffic"
+                echo "kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${CURRENT_ACTIVE}\"}}}'"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 echo ""
                 echo "📊 Final system status:"
                 kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service \
-                    -o custom-columns="NAME:.metadata.name,COLOR:.metadata.labels.color,STATUS:.status.phase,READY:.status.conditions[?(@.type=='Ready')].status"
+                    -o custom-columns="NAME:.metadata.name,COLOR:.metadata.labels.color,STATUS:.status.phase,READY:.status.conditions[?(@.type=='Ready')].status,IMAGE:.spec.containers[0].image"
             '''
         }
     }
