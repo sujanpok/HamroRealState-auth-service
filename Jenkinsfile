@@ -224,17 +224,21 @@ pipeline {
             }
         }
 
-        stage('Cleanup Old Deployment') {
+        stage('Scale Down Old Deployment') {
             steps {
                 script {
-                    echo "🧹 Cleaning up old deployment (${OLD_RELEASE})..."
+                    echo "⬇️ Scaling down old deployment (${OLD_RELEASE}) to 0 replicas..."
                     sh """
-                        if helm list -n ${K3S_NAMESPACE} | grep -q ${OLD_RELEASE}; then
-                            echo "🗑️ Removing old release: ${OLD_RELEASE}"
-                            helm uninstall ${OLD_RELEASE} --namespace ${K3S_NAMESPACE}
-                            echo "✅ Old deployment cleaned up"
+                        if kubectl get deployment ${OLD_RELEASE} -n ${K3S_NAMESPACE} 2>/dev/null; then
+                            echo "📉 Scaling ${OLD_RELEASE} to 0 replicas (keeping for instant rollback)"
+
+                            # Scale deployment to 0 (keeps deployment but no pods running)
+                            kubectl scale deployment ${OLD_RELEASE} --replicas=0 -n ${K3S_NAMESPACE}
+
+                            echo "✅ Old deployment scaled down (ready for instant rollback)"
+                            echo "🔄 To rollback: kubectl scale deployment ${OLD_RELEASE} --replicas=1 -n ${K3S_NAMESPACE}"
                         else
-                            echo "ℹ️ No old release to clean up"
+                            echo "ℹ️ No old deployment to scale down"
                         fi
                     """
                 }
