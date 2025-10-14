@@ -43,12 +43,24 @@ spec:
         
         ports:
         - containerPort: {{ .Values.service.targetPort }}
+          protocol: TCP
         
         envFrom:
         - configMapRef:
             name: {{ .Release.Name }}-config
         - secretRef:
             name: {{ .Release.Name }}-secret
+        
+        env:
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /app/secrets/serviceAccount.json
+        - name: PORT
+          value: "{{ .Values.service.targetPort }}"
+        
+        volumeMounts:
+        - name: firebase-creds
+          mountPath: /app/secrets
+          readOnly: true
         
         {{- if .Values.livenessProbe }}
         livenessProbe:
@@ -72,3 +84,8 @@ spec:
               - /bin/sh
               - -c
               - sleep 10
+      
+      volumes:
+      - name: firebase-creds
+        secret:
+          secretName: firebase-credentials

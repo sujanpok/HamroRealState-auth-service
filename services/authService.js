@@ -1,5 +1,4 @@
 //authService.js
-
 require('dotenv').config();
 const pool = require('../db');
 const bcrypt = require('bcryptjs');
@@ -8,55 +7,39 @@ const config = require('../config');
 const logger = require('../logger');
 const { OAuth2Client } = require('google-auth-library');
 const admin = require('firebase-admin');
+const fs = require('fs');
 
 const { schema, tables } = config.db;
+
 // Initialize Google OAuth2 client
 const client = new OAuth2Client(process.env.CLIENT_ID);
 
-// 🔥 Initialize Firebase Admin SDK using environment variables
-// 🔥 Initialize Firebase Admin SDK
+// 🔥 Initialize Firebase Admin SDK from JSON file
 if (!admin.apps.length) {
   try {
-    // ✅ Handle both \n and \\n cases
-    const rawKey = process.env.FIREBASE_PRIVATE_KEY;
-    let privateKey = rawKey;
+    const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
     
-    // If contains literal \n (without actual newlines), convert them
-    if (rawKey && rawKey.includes('\\n') && !rawKey.includes('\n')) {
-      privateKey = rawKey.replace(/\\n/g, '\n');
-    }
-    
-    // Debug logging
-    logger.info('🔍 Firebase Config Check:', {
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKeyExists: !!privateKey,
-      privateKeyLength: privateKey?.length,
-      hasBackslashN: rawKey?.includes('\\n'),
-      hasNewlines: privateKey?.includes('\n'),
-      startsCorrectly: privateKey?.trim().startsWith('-----BEGIN PRIVATE KEY-----'),
-      endsCorrectly: privateKey?.trim().endsWith('-----END PRIVATE KEY-----'),
-      databaseURL: process.env.FIREBASE_DATABASE_URL
-    });
-
-    if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
-      throw new Error('Missing required Firebase credentials');
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: privateKey.trim(), // Trim whitespace
-      }),
-      databaseURL: process.env.FIREBASE_DATABASE_URL
+    logger.info('🔍 Firebase initialization attempt:', {
+      credPath: credPath,
+      fileExists: credPath ? fs.existsSync(credPath) : false
     });
     
-    logger.info('✅ Firebase Admin SDK initialized successfully');
+    if (credPath && fs.existsSync(credPath)) {
+      // Use JSON file (mounted from Jenkins secret)
+      const serviceAccount = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+      
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL: process.env.FIREBASE_DATABASE_URL || serviceAccount.database_url
+      });
+      
+      logger.info('✅ Firebase Admin SDK initialized from JSON file');
+    } else {
+      throw new Error(`Firebase credentials file not found at: ${credPath}`);
+    }
   } catch (error) {
     logger.error('❌ Firebase initialization error:', {
       message: error.message,
-      code: error.code,
       stack: error.stack
     });
     logger.warn('⚠️ App will continue without Firebase');
@@ -84,7 +67,7 @@ const LOGIN_COLUMNS = {
   USER_TYPE: 'USER_TYPE',
   IS_ACTIVE: 'IS_ACTIVE',
   USER_ID: 'USER_ID',
-  AUTH_PROVIDER: 'AUTH_PROVIDER', // 🆕 NEW - track login method
+  AUTH_PROVIDER: 'AUTH_PROVIDER',
 };
 
 const PROFILE_COLUMNS = {
@@ -153,7 +136,6 @@ exports.registerUser = async (data) => {
   try {
     await dbClient.query('BEGIN');
 
-    // Check if user exists with AUTH_PROVIDER
     const userCheckQuery = `
       SELECT 
         p."${PROFILE_COLUMNS.EMAIL}",
@@ -170,7 +152,6 @@ exports.registerUser = async (data) => {
       
       await dbClient.query('ROLLBACK');
       
-      // Different messages based on auth provider
       if (authProvider === 'google') {
         logger.info(`Registration attempt for Google-registered email: ${email}`);
         return {
@@ -194,7 +175,6 @@ exports.registerUser = async (data) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert with AUTH_PROVIDER
     const insertLoginUserQuery = `
       INSERT INTO ${LOGIN_TABLE} 
       ("${LOGIN_COLUMNS.USERNAME}", "${LOGIN_COLUMNS.PASSWORD}", "${LOGIN_COLUMNS.USER_TYPE}", 
@@ -206,7 +186,7 @@ exports.registerUser = async (data) => {
       hashedPassword,
       USER_TYPES.TENANT,
       ACTIVE_STATUS.ACTIVE,
-      'local' // 🆕 Set auth provider to 'local'
+      'local'
     ]);
 
     const userId = userRes.rows[0][LOGIN_COLUMNS.USER_ID];
@@ -224,7 +204,6 @@ exports.registerUser = async (data) => {
     }
 
     const convertedGender = convertGender(gender);
-    logger.info(`Converting gender: "${gender}" -> "${convertedGender}"`);
 
     const insertProfileQuery = `
       INSERT INTO ${USER_PROFILE_TABLE} 
@@ -253,7 +232,7 @@ exports.registerUser = async (data) => {
         lastSeen: Date.now(),
         createdAt: Date.now(),
         userType: USER_TYPES.TENANT,
-        authProvider: 'local' // 🆕 Track in Firebase
+        authProvider: 'local'
       });
       logger.info(`Firebase user created for userId: ${userId}`);
     } catch (fbError) {
@@ -268,8 +247,7 @@ exports.registerUser = async (data) => {
     await dbClient.query('ROLLBACK');
     logger.error('Database error during registration:', {
       message: error.message,
-      stack: error.stack,
-      data: { full_name, gender, email: email ? 'provided' : 'missing' }
+      stack: error.stack
     });
     return {
       status: 500,
@@ -319,10 +297,8 @@ exports.loginUser = async (data) => {
       };
     }
 
-    // 🆕 CHECK AUTH PROVIDER
     const authProvider = user[LOGIN_COLUMNS.AUTH_PROVIDER];
     
-    // If user registered with Google only, password will be NULL
     if (authProvider === 'google' && !user[LOGIN_COLUMNS.PASSWORD]) {
       logger.warn(`Password login attempt for Google-only account: ${email}`);
       return {
@@ -334,7 +310,6 @@ exports.loginUser = async (data) => {
       };
     }
 
-    // Verify password
     if (!user[LOGIN_COLUMNS.PASSWORD]) {
       logger.warn(`No password set for account: ${email}`);
       return {
@@ -357,7 +332,7 @@ exports.loginUser = async (data) => {
 
     const userId = user[LOGIN_COLUMNS.USER_ID];
 
-    // 🔥 CHECK/UPDATE FIREBASE USER
+    // 🔥 UPDATE FIREBASE USER STATUS
     try {
       const firebaseUserRef = db.ref(`users/${userId}`);
       const snapshot = await firebaseUserRef.once('value');
@@ -406,7 +381,7 @@ exports.loginUser = async (data) => {
 exports.getUserProfile = async (userId) => {
   const query = `
     SELECT 
-      p."${PROFILE_COLUMNS.USER_ID}",  -- 🆕 ADD THIS LINE
+      p."${PROFILE_COLUMNS.USER_ID}",
       p."${PROFILE_COLUMNS.FULL_NAME}", 
       p."${PROFILE_COLUMNS.PHONE_NUMBER}", 
       p."${PROFILE_COLUMNS.EMAIL}",
@@ -455,7 +430,6 @@ exports.loginWithGoogle = async (id_token) => {
 
     await dbClient.query('BEGIN');
 
-    // Check if user exists with AUTH_PROVIDER
     const userCheckRes = await dbClient.query(
       `SELECT 
         u."${LOGIN_COLUMNS.USER_ID}", 
@@ -470,7 +444,6 @@ exports.loginWithGoogle = async (id_token) => {
     let userId, userType, authProvider;
     
     if (userCheckRes.rows.length === 0) {
-      // 🆕 NEW USER - Create with Google auth
       const insertLoginRes = await dbClient.query(
         `INSERT INTO ${LOGIN_TABLE} 
          ("${LOGIN_COLUMNS.USERNAME}", "${LOGIN_COLUMNS.PASSWORD}", "${LOGIN_COLUMNS.USER_TYPE}", 
@@ -510,12 +483,10 @@ exports.loginWithGoogle = async (id_token) => {
         logger.error('Firebase user creation failed for Google login:', fbError.message);
       }
     } else {
-      // 🆕 EXISTING USER
       userId = userCheckRes.rows[0][LOGIN_COLUMNS.USER_ID];
       userType = userCheckRes.rows[0][LOGIN_COLUMNS.USER_TYPE];
       authProvider = userCheckRes.rows[0][LOGIN_COLUMNS.AUTH_PROVIDER];
 
-      // If user registered with local (email/password), update to 'both'
       if (authProvider === 'local') {
         await dbClient.query(
           `UPDATE ${LOGIN_TABLE} 
@@ -565,3 +536,12 @@ exports.loginWithGoogle = async (id_token) => {
     dbClient.release();
   }
 };
+
+// module.exports = {
+//   registerUser: exports.registerUser,
+//   loginUser: exports.loginUser,
+//   getUserProfile: exports.getUserProfile,
+//   loginWithGoogle: exports.loginWithGoogle,
+//   admin,
+//   db
+// };

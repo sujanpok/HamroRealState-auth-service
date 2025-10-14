@@ -8,3 +8,4 @@ logs/
 .dockerignore
 
 .env
+firebase-credentials.json

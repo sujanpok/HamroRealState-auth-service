@@ -14,8 +14,8 @@ pipeline {
         // App configs
         APP_NAME   = 'auth-service'
         APP_DIR    = "${WORKSPACE}"
-        PORT       = '80'  // Service port (external for LoadBalancer)
-        APP_PORT   = '3001'  // Pod/container port where app listens
+        PORT       = '80'
+        APP_PORT   = '3001'
 
         // Environment variables
         NODE_ENV   = 'production'
@@ -25,7 +25,7 @@ pipeline {
         // k3s and Helm configs
         HELM_CHART_PATH = './helm'
         K3S_NAMESPACE   = 'default'
-        SERVICE_NAME    = 'auth-service'  // Fixed service name for traffic switching
+        SERVICE_NAME    = 'auth-service'
 
         // Blue-Green specific
         BLUE_LABEL = 'blue'
@@ -58,7 +58,6 @@ pipeline {
             steps {
                 script {
                     echo "🔍 Detecting current active color..."
-                    // Detect current active color (default to blue if not found)
                     env.CURRENT_ACTIVE = sh(
                         script: "kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo '${BLUE_LABEL}'",
                         returnStdout: true
@@ -110,17 +109,30 @@ pipeline {
             }
         }
 
+        stage('Create Firebase Secret') {
+            steps {
+                script {
+                    echo "🔥 Creating Firebase credentials secret..."
+                    withCredentials([file(credentialsId: 'firebase-json', variable: 'FIREBASE_CREDS')]) {
+                        sh """
+                            kubectl create secret generic firebase-credentials \
+                                --from-file=serviceAccount.json=\${FIREBASE_CREDS} \
+                                --namespace ${K3S_NAMESPACE} \
+                                --dry-run=client -o yaml | kubectl apply -f -
+                            echo "✅ Firebase secret created/updated"
+                        """
+                    }
+                }
+            }
+        }
+
         stage('Blue-Green Deploy to k3s') {
             steps {
                 withCredentials([
                     string(credentialsId: 'auth-jwt-secret', variable: 'JWT_SECRET'),
                     string(credentialsId: 'auth-db-password', variable: 'DB_PASSWORD'),
                     string(credentialsId: 'auth-database-url', variable: 'DATABASE_URL'),
-                    string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET'),
-                    string(credentialsId: 'vite_firebase_project_id', variable: 'FIREBASE_PROJECT_ID'),
-                    string(credentialsId: 'firebase_client_id', variable: 'FIREBASE_CLIENT_EMAIL'),
-                    string(credentialsId: 'firebase_private_key', variable: 'FIREBASE_PRIVATE_KEY'),
-                    string(credentialsId: 'firebase_database_url', variable: 'FIREBASE_DATABASE_URL')
+                    string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET')
                 ]) {
                     script {
                         echo "🔵 Deploying NEW version (${NEW_COLOR}) - OLD version (${CURRENT_ACTIVE}) keeps running"
@@ -138,10 +150,6 @@ pipeline {
                                 --set secrets.DB_PASSWORD="${DB_PASSWORD}" \
                                 --set secrets.DATABASE_URL="${DATABASE_URL}" \
                                 --set secrets.CLIENT_SECRET="${CLIENT_SECRET}" \
-                                --set secrets.FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" \
-                                --set secrets.FIREBASE_CLIENT_EMAIL="${FIREBASE_CLIENT_EMAIL}" \
-                                --set secrets.FIREBASE_PRIVATE_KEY="${FIREBASE_PRIVATE_KEY}" \
-                                --set secrets.FIREBASE_DATABASE_URL="${FIREBASE_DATABASE_URL}" \
                                 --namespace ${K3S_NAMESPACE}
                             
                             echo "✅ Helm deployment completed"
@@ -170,7 +178,6 @@ pipeline {
                 sh '''
                     echo "🏥 Testing new deployment (${NEW_COLOR})..."
                     
-                    # Get pod name
                     pod=$(kubectl get pod -l app=auth-service,color=${NEW_COLOR} \
                         -o jsonpath='{.items[0].metadata.name}' -n ${K3S_NAMESPACE})
                     
@@ -181,12 +188,10 @@ pipeline {
                     
                     echo "🔍 Testing pod: $pod"
                     
-                    # Port-forward and test
                     kubectl port-forward pod/$pod 8080:${APP_PORT} -n ${K3S_NAMESPACE} &
                     PF_PID=$!
                     sleep 5
                     
-                    # Test health endpoint
                     for i in {1..30}; do
                         if curl -f http://localhost:8080/health 2>/dev/null; then
                             echo "✅ Health check passed!"
@@ -238,7 +243,6 @@ pipeline {
                         echo ""
                         echo "📉 Step 1: Scale down old deployment to 0 replicas (backup)"
                         
-                        # Scale down the previous deployment
                         if kubectl get deployment ${OLD_RELEASE} -n ${K3S_NAMESPACE} 2>/dev/null; then
                             echo "   Scaling ${OLD_RELEASE} to 0 replicas..."
                             kubectl scale deployment ${OLD_RELEASE} --replicas=0 -n ${K3S_NAMESPACE}
@@ -250,7 +254,6 @@ pipeline {
                         echo ""
                         echo "🗑️ Step 2: Delete deployments older than last 2"
                         
-                        # Get all deployments sorted by creation time (newest first)
                         ALL_DEPLOYMENTS=\$(kubectl get deployments -n ${K3S_NAMESPACE} \
                             -l app=auth-service \
                             --sort-by=.metadata.creationTimestamp \
@@ -258,11 +261,9 @@ pipeline {
                             tr ' ' '\\n' | \
                             tac)
                         
-                        # Count deployments
                         DEPLOYMENT_COUNT=\$(echo "\$ALL_DEPLOYMENTS" | grep -c '^' || echo 0)
                         echo "   Found \$DEPLOYMENT_COUNT auth-service deployment(s)"
                         
-                        # Skip first 2 (current + backup), delete rest
                         if [ \$DEPLOYMENT_COUNT -gt 2 ]; then
                             echo "   Deleting \$((\$DEPLOYMENT_COUNT - 2)) old deployment(s)..."
                             echo "\$ALL_DEPLOYMENTS" | tail -n +3 | while read deployment; do
@@ -270,7 +271,6 @@ pipeline {
                                     echo ""
                                     echo "   🗑️ Deleting old deployment: \$deployment"
                                     
-                                    # Delete deployment and resources
                                     kubectl delete deployment \$deployment -n ${K3S_NAMESPACE} --ignore-not-found=true
                                     kubectl delete configmap \${deployment}-config -n ${K3S_NAMESPACE} --ignore-not-found=true
                                     kubectl delete secret \${deployment}-secret -n ${K3S_NAMESPACE} --ignore-not-found=true
@@ -298,7 +298,7 @@ pipeline {
                         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                         echo "🔄 Instant Rollback Command (5-10 seconds):"
                         echo "   kubectl scale deployment ${OLD_RELEASE} --replicas=1 -n ${K3S_NAMESPACE}"
-                        echo "   kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${CURRENT_ACTIVE}\"}}}'"
+                        echo "   kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${CURRENT_ACTIVE}\"}}}'  "
                         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                     """
                 }
@@ -310,7 +310,6 @@ pipeline {
                 sh '''
                     echo "🏥 Final health verification via service..."
                     
-                    # Test service endpoint
                     kubectl run curl-test --rm -i --restart=Never --image=curlimages/curl -- \
                         curl -f http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/health || \
                         curl -f http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/ || \
@@ -335,7 +334,6 @@ pipeline {
                     docker volume prune -f || true
                     docker builder prune -a -f --filter until=6h || true
                     
-                    # Keep only latest 2 versions of app image
                     docker images ${DOCKER_IMAGE} --format "{{.ID}}" | tail -n +3 | \
                         xargs -r docker rmi -f || true
                     
@@ -389,7 +387,7 @@ pipeline {
                 echo "kubectl rollout status deployment/${OLD_RELEASE} -n ${K3S_NAMESPACE}"
                 echo ""
                 echo "# Step 3: Switch traffic"
-                echo "kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${CURRENT_ACTIVE}\"}}}'"
+                echo "kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${CURRENT_ACTIVE}\"}}}'  "
                 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 echo ""
                 echo "📊 Final system status:"
