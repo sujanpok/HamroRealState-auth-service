@@ -1,17 +1,24 @@
+{{- if eq .Values.color "blue" }}
+# Only create service on first (blue) deployment
+# Service will be shared by both blue and green deployments
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.serviceName | default .Values.appName | default "auth-service" }}
+  name: auth-service  # Fixed name - NOT tied to release
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ .Values.appName | default "auth-service" }}
+    app: auth-service
+  annotations:
+    # Prevent Helm from claiming ownership
+    helm.sh/resource-policy: keep
 spec:
   type: {{ .Values.service.type }}
-  loadBalancerIP: {{ .Values.service.loadBalancerIP | default "192.168.1.200" }}  # Fixed EXTERNAL-IP
+  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
   ports:
   - port: {{ .Values.service.port }}
     targetPort: {{ .Values.service.targetPort }}
     protocol: TCP
   selector:
-    app: {{ .Values.appName | default "auth-service" }}
-    color: {{ .Values.color }}
+    app: auth-service
+    color: {{ .Values.color }}  # Jenkins will patch this
+{{- end }}
