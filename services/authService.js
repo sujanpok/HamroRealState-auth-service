@@ -14,32 +14,58 @@ const { schema, tables } = config.db;
 const client = new OAuth2Client(process.env.CLIENT_ID);
 
 // 🔥 Initialize Firebase Admin SDK using environment variables
+// 🔥 Initialize Firebase Admin SDK
 if (!admin.apps.length) {
   try {
+    // ✅ CRITICAL: Convert \n string literals to actual newlines
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    
+    // Debug logging
+    logger.info('🔍 Firebase Config Check:', {
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKeyExists: !!privateKey,
+      privateKeyLength: privateKey?.length,
+      rawKeyContainsBackslashN: process.env.FIREBASE_PRIVATE_KEY?.includes('\\n'),
+      processedKeyContainsNewlines: privateKey?.includes('\n'),
+      startsCorrectly: privateKey?.startsWith('-----BEGIN PRIVATE KEY-----'),
+      endsCorrectly: privateKey?.endsWith('-----END PRIVATE KEY-----'),
+      databaseURL: process.env.FIREBASE_DATABASE_URL
+    });
+    
+    if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
+      throw new Error('Missing required Firebase credentials');
+    }
+    
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        privateKey: privateKey, // Now has real newlines
       }),
       databaseURL: process.env.FIREBASE_DATABASE_URL
     });
+    
     logger.info('✅ Firebase Admin SDK initialized successfully');
   } catch (error) {
-    logger.error('❌ Firebase initialization error:', error.message);
+    logger.error('❌ Firebase initialization error:', {
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    });
     logger.warn('⚠️ App will continue without Firebase');
-    // ✅ NO throw - app continues even if Firebase fails
   }
 }
 
-// ✅ Safe database export (may be undefined if Firebase failed)
+// Safe database export
 let db;
 try {
   if (admin.apps.length > 0) {
     db = admin.database();
+    logger.info('✅ Firebase Database instance created');
   }
 } catch (error) {
-  logger.error('Firebase database not available:', error.message);
+  logger.error('❌ Firebase database not available:', error.message);
 }
 
 // Centralized table and column names
