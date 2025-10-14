@@ -1,15 +1,13 @@
-{{- if eq .Values.color "blue" }}
-# Only create service on first (blue) deployment
-# Service will be shared by both blue and green deployments
+{{- if not (lookup "v1" "Service" .Release.Namespace "auth-service") }}
+# Only create service if it doesn't exist yet
 apiVersion: v1
 kind: Service
 metadata:
-  name: auth-service  # Fixed name - NOT tied to release
+  name: auth-service
   namespace: {{ .Release.Namespace }}
   labels:
     app: auth-service
   annotations:
-    # Prevent Helm from claiming ownership
     helm.sh/resource-policy: keep
 spec:
   type: {{ .Values.service.type }}
@@ -20,5 +18,5 @@ spec:
     protocol: TCP
   selector:
     app: auth-service
-    color: {{ .Values.color }}  # Jenkins will patch this
+    color: {{ .Values.color }}
 {{- end }}
