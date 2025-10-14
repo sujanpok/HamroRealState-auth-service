@@ -131,6 +131,7 @@ pipeline {
                     string(credentialsId: 'auth-db-password', variable: 'DB_PASSWORD'),
                     string(credentialsId: 'auth-database-url', variable: 'DATABASE_URL'),
                     string(credentialsId: 'auth-client-secret', variable: 'CLIENT_SECRET'),
+                    string(credentialsId: 'vite_firebase_project_id', variable: 'FIREBASE_PROJECT_ID'),
                     string(credentialsId: 'firebase_client_id', variable: 'FIREBASE_CLIENT_ID'),
                     string(credentialsId: 'firebase_private_key', variable: 'FIREBASE_PRIVATE_KEY'),
                     string(credentialsId: 'firebase_database_url', variable: 'FIREBASE_DATABASE_URL')
@@ -151,6 +152,7 @@ pipeline {
                                 --set secrets.DB_PASSWORD="${DB_PASSWORD}" \
                                 --set secrets.DATABASE_URL="${DATABASE_URL}" \
                                 --set secrets.CLIENT_SECRET="${CLIENT_SECRET}" \
+                                --set secrets.FIREBASE_PROJECT_ID="${FIREBASE_PROJECT_ID}" \
                                 --set secrets.FIREBASE_CLIENT_ID="${FIREBASE_CLIENT_ID}" \
                                 --set secrets.FIREBASE_PRIVATE_KEY="${FIREBASE_PRIVATE_KEY}" \
                                 --set secrets.FIREBASE_DATABASE_URL="${FIREBASE_DATABASE_URL}" \
