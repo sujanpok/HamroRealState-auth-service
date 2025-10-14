@@ -42,8 +42,6 @@ try {
   logger.error('Firebase database not available:', error.message);
 }
 
-module.exports = db;
-
 // Centralized table and column names
 const LOGIN_TABLE = `"${schema}"."${tables.login}"`;
 const USER_PROFILE_TABLE = `"${schema}"."${tables.userProfile}"`;
