@@ -17,8 +17,14 @@ const client = new OAuth2Client(process.env.CLIENT_ID);
 // 🔥 Initialize Firebase Admin SDK
 if (!admin.apps.length) {
   try {
-    // ✅ CRITICAL: Convert \n string literals to actual newlines
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    // ✅ Handle both \n and \\n cases
+    const rawKey = process.env.FIREBASE_PRIVATE_KEY;
+    let privateKey = rawKey;
+    
+    // If contains literal \n (without actual newlines), convert them
+    if (rawKey && rawKey.includes('\\n') && !rawKey.includes('\n')) {
+      privateKey = rawKey.replace(/\\n/g, '\n');
+    }
     
     // Debug logging
     logger.info('🔍 Firebase Config Check:', {
@@ -26,22 +32,22 @@ if (!admin.apps.length) {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKeyExists: !!privateKey,
       privateKeyLength: privateKey?.length,
-      rawKeyContainsBackslashN: process.env.FIREBASE_PRIVATE_KEY?.includes('\\n'),
-      processedKeyContainsNewlines: privateKey?.includes('\n'),
-      startsCorrectly: privateKey?.startsWith('-----BEGIN PRIVATE KEY-----'),
-      endsCorrectly: privateKey?.endsWith('-----END PRIVATE KEY-----'),
+      hasBackslashN: rawKey?.includes('\\n'),
+      hasNewlines: privateKey?.includes('\n'),
+      startsCorrectly: privateKey?.trim().startsWith('-----BEGIN PRIVATE KEY-----'),
+      endsCorrectly: privateKey?.trim().endsWith('-----END PRIVATE KEY-----'),
       databaseURL: process.env.FIREBASE_DATABASE_URL
     });
-    
+
     if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
       throw new Error('Missing required Firebase credentials');
     }
-    
+
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: privateKey, // Now has real newlines
+        privateKey: privateKey.trim(), // Trim whitespace
       }),
       databaseURL: process.env.FIREBASE_DATABASE_URL
     });
