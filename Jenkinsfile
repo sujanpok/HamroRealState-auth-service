@@ -17,14 +17,14 @@ pipeline {
         PORT       = '80'  // Service port (external for LoadBalancer)
         APP_PORT   = '3001'  // Pod/container port where app listens
 
-        // Environment variables (adapt from your config.js/db.js)
+        // Environment variables
         NODE_ENV   = 'production'
         DB_HOST    = 'postgres'
         DB_PORT    = '5432'
 
         // k3s and Helm configs
-        HELM_CHART_PATH = './helm'  // Path to your Helm chart
-        K3S_NAMESPACE   = 'default'  // Or your preferred namespace
+        HELM_CHART_PATH = './helm'
+        K3S_NAMESPACE   = 'default'
         SERVICE_NAME    = 'auth-service'  // Fixed service name for traffic switching
 
         // Blue-Green specific
@@ -33,7 +33,7 @@ pipeline {
 
         // Docker image
         DOCKER_IMAGE = "${DOCKER_HUB_USR}/${APP_NAME}"
-        DOCKER_TAG   = "${env.BUILD_NUMBER}"  // Unique tag for each build
+        DOCKER_TAG   = "${env.BUILD_NUMBER}"
     }
 
     stages {
@@ -59,20 +59,25 @@ pipeline {
                 script {
                     echo "🔍 Detecting current active color..."
                     // Detect current active color (default to blue if not found)
-                    env.CURRENT_ACTIVE = sh(script: "kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo '${BLUE_LABEL}'", returnStdout: true).trim()
+                    env.CURRENT_ACTIVE = sh(
+                        script: "kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo '${BLUE_LABEL}'",
+                        returnStdout: true
+                    ).trim()
+                    
                     env.NEW_COLOR = (env.CURRENT_ACTIVE == BLUE_LABEL) ? GREEN_LABEL : BLUE_LABEL
                     env.NEW_RELEASE = "auth-service-${NEW_COLOR}"
-                    env.OLD_RELEASE = "auth-service-${(NEW_COLOR == BLUE_LABEL ? GREEN_LABEL : BLUE_LABEL)}"
-                    echo "Current active: ${env.CURRENT_ACTIVE} | Deploying to: ${env.NEW_COLOR} (release: ${env.NEW_RELEASE})"
+                    env.OLD_RELEASE = "auth-service-${CURRENT_ACTIVE}"
+                    
+                    echo "✅ Current active: ${env.CURRENT_ACTIVE}"
+                    echo "🎯 Deploying to: ${env.NEW_COLOR} (release: ${env.NEW_RELEASE})"
+                    echo "🔄 Old release: ${env.OLD_RELEASE} (will be kept as backup)"
                 }
             }
         }
 
         stage('Docker Login') {
             steps {
-                sh '''
-                    echo "${DOCKER_HUB_PSW}" | docker login -u "${DOCKER_HUB_USR}" --password-stdin
-                '''
+                sh 'echo "${DOCKER_HUB_PSW}" | docker login -u "${DOCKER_HUB_USR}" --password-stdin'
             }
         }
 
@@ -80,9 +85,13 @@ pipeline {
             steps {
                 dir("${APP_DIR}") {
                     sh '''
-                        echo "🏗️ Building from latest commit (ARM64 for Raspberry Pi)..."
+                        echo "🏗️ Building Docker image for ARM64..."
                         docker buildx create --use || true
-                        docker buildx build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest --push .
+                        docker buildx build \
+                            -t ${DOCKER_IMAGE}:${DOCKER_TAG} \
+                            -t ${DOCKER_IMAGE}:latest \
+                            --push .
+                        echo "✅ Image pushed: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                     '''
                 }
             }
@@ -90,37 +99,14 @@ pipeline {
 
         stage('Create Image Pull Secret') {
             steps {
-                script {
-                    // Create or update the docker-registry secret for image pulls
-                    sh """
-                        kubectl create secret docker-registry docker-hub-credentials \
-                            --docker-server=https://index.docker.io/v1/ \
-                            --docker-username="${DOCKER_HUB_USR}" \
-                            --docker-password="${DOCKER_HUB_PSW}" \
-                            -n ${K3S_NAMESPACE} \
-                            --dry-run=client -o yaml | kubectl apply -f -
-                    """
-                }
-            }
-        }
-
-        stage('🧹 Cleanup Conflicting Resources') {
-            steps {
-                script {
-                    echo "🧹 Pre-deployment cleanup to avoid Helm conflicts..."
-                    sh """
-                        # Delete conflicting service if it exists
-                        kubectl delete service ${SERVICE_NAME} -n ${K3S_NAMESPACE} --ignore-not-found=true
-                        
-                        # Clean up old release if it exists
-                        helm uninstall ${OLD_RELEASE} -n ${K3S_NAMESPACE} --ignore-not-found=true || true
-                        
-                        # Wait for cleanup to complete
-                        sleep 3
-                        
-                        echo "✅ Cleanup completed"
-                    """
-                }
+                sh """
+                    kubectl create secret docker-registry docker-hub-credentials \
+                        --docker-server=https://index.docker.io/v1/ \
+                        --docker-username="${DOCKER_HUB_USR}" \
+                        --docker-password="${DOCKER_HUB_PSW}" \
+                        -n ${K3S_NAMESPACE} \
+                        --dry-run=client -o yaml | kubectl apply -f -
+                """
             }
         }
 
@@ -137,7 +123,7 @@ pipeline {
                     string(credentialsId: 'firebase_database_url', variable: 'FIREBASE_DATABASE_URL')
                 ]) {
                     script {
-                        echo "🔵 Starting blue-green deployment to k3s"
+                        echo "🔵 Deploying NEW version (${NEW_COLOR}) - OLD version (${CURRENT_ACTIVE}) keeps running"
 
                         sh '''
                             helm upgrade --install ${NEW_RELEASE} ${HELM_CHART_PATH} \
@@ -157,66 +143,100 @@ pipeline {
                                 --set secrets.FIREBASE_PRIVATE_KEY="${FIREBASE_PRIVATE_KEY}" \
                                 --set secrets.FIREBASE_DATABASE_URL="${FIREBASE_DATABASE_URL}" \
                                 --namespace ${K3S_NAMESPACE}
-                        '''
-                        
-                        // Wait for rollout
-                        echo "⏳ Waiting for deployment rollout..."
-                        sleep 10
-                        sh "kubectl rollout status deployment/${NEW_RELEASE} -n ${K3S_NAMESPACE} --timeout=2m"
-                        
-                        // Test new deployment directly via port-forward
-                        echo "⏳ Testing new container (${NEW_COLOR})..."
-                        sh '''
-                            pod=$(kubectl get pod -l app=auth-service,color=${NEW_COLOR} -o jsonpath='{.items[0].metadata.name}' -n ${K3S_NAMESPACE})
-                            if [ -z "$pod" ]; then
-                                echo "❌ No pod found for ${NEW_COLOR}"
-                                exit 1
-                            fi
                             
-                            echo "🔍 Testing pod: $pod"
-                            kubectl port-forward pod/$pod 8080:${APP_PORT} -n ${K3S_NAMESPACE} &
-                            PF_PID=$!
-                            sleep 5
-                            
-                            # Test health endpoint
-                            for i in {1..30}; do
-                                if curl -f http://localhost:8080/health 2>/dev/null; then
-                                    echo "✅ New container health check passed!"
-                                    kill $PF_PID
-                                    break
-                                elif curl -f http://localhost:8080/ 2>/dev/null; then
-                                    echo "✅ New container is responding (no /health endpoint)!"
-                                    kill $PF_PID
-                                    break
-                                fi
-                                echo "Attempt $i/30 - waiting 5 seconds..."
-                                sleep 5
-                                if [ $i -eq 30 ]; then
-                                    echo "❌ New container failed health check"
-                                    kubectl logs -n ${K3S_NAMESPACE} pod/$pod --tail=50
-                                    kill $PF_PID
-                                    exit 1
-                                fi
-                            done
+                            echo "✅ Helm deployment completed"
                         '''
-                        
-                        // Switch traffic by patching service
-                        sh """
-                            kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -p '{\"spec\":{\"selector\":{\"color\":\"${NEW_COLOR}\"}}}'
-                        """
-                        echo "🔄 Traffic switched to ${NEW_COLOR}"
-
-                        // Cleanup old environment (if it exists)
-                        sh """
-                            # Clean up old release after successful deployment
-                            if helm list -n ${K3S_NAMESPACE} | grep -q ${OLD_RELEASE}; then
-                                echo "🗑️ Cleaning up old release: ${OLD_RELEASE}"
-                                helm uninstall ${OLD_RELEASE} --namespace ${K3S_NAMESPACE}
-                            else
-                                echo "ℹ️ No old release to clean up"
-                            fi
-                        """
                     }
+                }
+            }
+        }
+
+        stage('Wait for Rollout') {
+            steps {
+                script {
+                    echo "⏳ Waiting for new deployment to be ready..."
+                    sh """
+                        kubectl rollout status deployment/${NEW_RELEASE} \
+                            -n ${K3S_NAMESPACE} \
+                            --timeout=3m
+                    """
+                    echo "✅ Rollout completed successfully"
+                }
+            }
+        }
+
+        stage('Health Check New Deployment') {
+            steps {
+                sh '''
+                    echo "🏥 Testing new deployment (${NEW_COLOR})..."
+                    
+                    # Get pod name
+                    pod=$(kubectl get pod -l app=auth-service,color=${NEW_COLOR} \
+                        -o jsonpath='{.items[0].metadata.name}' -n ${K3S_NAMESPACE})
+                    
+                    if [ -z "$pod" ]; then
+                        echo "❌ No pod found for ${NEW_COLOR}"
+                        exit 1
+                    fi
+                    
+                    echo "🔍 Testing pod: $pod"
+                    
+                    # Port-forward and test
+                    kubectl port-forward pod/$pod 8080:${APP_PORT} -n ${K3S_NAMESPACE} &
+                    PF_PID=$!
+                    sleep 5
+                    
+                    # Test health endpoint
+                    for i in {1..30}; do
+                        if curl -f http://localhost:8080/health 2>/dev/null; then
+                            echo "✅ Health check passed!"
+                            kill $PF_PID 2>/dev/null || true
+                            exit 0
+                        elif curl -f http://localhost:8080/ 2>/dev/null; then
+                            echo "✅ Root endpoint responding!"
+                            kill $PF_PID 2>/dev/null || true
+                            exit 0
+                        fi
+                        echo "⏳ Attempt $i/30 - waiting..."
+                        sleep 5
+                    done
+                    
+                    echo "❌ Health check failed after 30 attempts"
+                    kubectl logs -n ${K3S_NAMESPACE} pod/$pod --tail=50
+                    kill $PF_PID 2>/dev/null || true
+                    exit 1
+                '''
+            }
+        }
+
+        stage('Switch Traffic') {
+            steps {
+                script {
+                    echo "🔄 Switching traffic from ${CURRENT_ACTIVE} → ${NEW_COLOR}"
+                    sh """
+                        kubectl patch svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} \
+                            -p '{"spec":{"selector":{"color":"${NEW_COLOR}"}}}'
+                    """
+                    echo "✅ Traffic switched successfully!"
+                    echo "🎯 Live traffic now going to: ${NEW_COLOR}"
+                    echo "🛡️ Backup version (${CURRENT_ACTIVE}) still available for rollback"
+                }
+            }
+        }
+
+        stage('Cleanup Old Deployment') {
+            steps {
+                script {
+                    echo "🧹 Cleaning up old deployment (${OLD_RELEASE})..."
+                    sh """
+                        if helm list -n ${K3S_NAMESPACE} | grep -q ${OLD_RELEASE}; then
+                            echo "🗑️ Removing old release: ${OLD_RELEASE}"
+                            helm uninstall ${OLD_RELEASE} --namespace ${K3S_NAMESPACE}
+                            echo "✅ Old deployment cleaned up"
+                        else
+                            echo "ℹ️ No old release to clean up"
+                        fi
+                    """
                 }
             }
         }
@@ -224,61 +244,38 @@ pipeline {
         stage('Final Health Check') {
             steps {
                 sh '''
-                    echo "🏥 Final health verification..."
+                    echo "🏥 Final health verification via service..."
                     
-                    # Test internal cluster access
+                    # Test service endpoint
                     kubectl run curl-test --rm -i --restart=Never --image=curlimages/curl -- \
                         curl -f http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/health || \
                         curl -f http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}/ || \
-                        echo "⚠️ Health check failed, but deployment may still be working"
+                        echo "⚠️ Service health check warning (may still be working)"
                     
-                    echo "📊 Pods status:"
+                    echo "📊 Final status:"
                     kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service -o wide
-                    
-                    echo "📊 Service status:"
-                    kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE} -o wide
-                    
-                    echo "🔗 Service endpoints:"
+                    kubectl get svc ${SERVICE_NAME} -n ${K3S_NAMESPACE}
                     kubectl get endpoints ${SERVICE_NAME} -n ${K3S_NAMESPACE}
                 '''
             }
         }
 
-        stage('🧹 Deep Cleanup') {
+        stage('🧹 Docker Cleanup') {
             steps {
                 sh '''
-                    echo "🧹 Starting comprehensive cleanup..."
+                    echo "🧹 Cleaning up Docker resources..."
                     
-                    echo "📦 Disk usage BEFORE cleanup:"
-                    df -h /var/lib/docker | tail -1 || echo "Docker directory not found"
-                    docker system df || echo "Docker system df failed"
+                    docker image prune -a -f --filter until=24h || true
+                    docker container prune -f --filter until=1h || true
+                    docker network prune -f || true
+                    docker volume prune -f || true
+                    docker builder prune -a -f --filter until=6h || true
                     
-                    echo "🗑️ Removing old and dangling images..."
-                    docker image prune -a -f --filter until=24h || echo "Image prune failed"
+                    # Keep only latest 2 versions of app image
+                    docker images ${DOCKER_IMAGE} --format "{{.ID}}" | tail -n +3 | \
+                        xargs -r docker rmi -f || true
                     
-                    echo "🗑️ Removing stopped containers..."
-                    docker container prune -f --filter until=1h || echo "Container prune failed"
-                    
-                    echo "🗑️ Removing unused networks..."
-                    docker network prune -f || echo "Network prune failed"
-                    
-                    echo "🗑️ Removing unused volumes..."
-                    docker volume prune -f || echo "Volume prune failed"
-                    
-                    echo "🗑️ Cleaning build cache..."
-                    docker builder prune -a -f --filter until=6h || echo "Builder prune failed"
-                    
-                    echo "🗑️ Removing old Docker Hub images (keep latest 2)..."
-                    docker images ${DOCKER_IMAGE} --format "{{.ID}}" | tail -n +3 | xargs -r docker rmi -f || echo "Old image cleanup completed"
-                    
-                    echo "🗑️ Force cleanup of everything unused..."
-                    docker system prune -a -f --volumes || echo "System prune completed"
-                    
-                    echo "📦 Disk usage AFTER cleanup:"
-                    df -h /var/lib/docker | tail -1 || echo "Docker directory not found"
-                    docker system df || echo "Docker system df failed"
-                    
-                    echo "🎯 Cleanup completed!"
+                    echo "✅ Docker cleanup completed"
                 '''
             }
         }
@@ -288,28 +285,37 @@ pipeline {
         always {
             sh 'docker logout || true'
         }
+        
         failure {
-            sh '''
-                echo "❌ Deployment failed - emergency cleanup..."
-                kubectl delete pod -n ${K3S_NAMESPACE} -l app=auth-service --force --grace-period=0 || true
-                kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service --tail=100 || true
-                kubectl describe pods -n ${K3S_NAMESPACE} -l app=auth-service || true
-                kubectl get events -n ${K3S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20 || true
-                docker container prune -f || true
-                docker image prune -f || true
-            '''
+            script {
+                echo "❌ DEPLOYMENT FAILED!"
+                echo "🛡️ Old version (${CURRENT_ACTIVE}) is still running and serving traffic"
+                echo "🔄 To rollback manually: Re-run previous successful build"
+                
+                sh '''
+                    echo "📋 Failure diagnostics:"
+                    kubectl logs -n ${K3S_NAMESPACE} -l app=auth-service,color=${NEW_COLOR} --tail=100 || true
+                    kubectl describe pods -n ${K3S_NAMESPACE} -l app=auth-service,color=${NEW_COLOR} || true
+                    kubectl get events -n ${K3S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20 || true
+                    
+                    echo "📊 Current deployment status:"
+                    helm list -n ${K3S_NAMESPACE} | grep auth-service || true
+                    kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service || true
+                '''
+            }
         }
+        
         success {
             sh '''
-                echo "✅ Auto-deployment successful!"
-                echo "🔗 Triggered by: GitHub push"
+                echo "✅ DEPLOYMENT SUCCESSFUL!"
+                echo "🎯 Active version: ${NEW_COLOR}"
                 echo "📦 Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                echo "🌐 Internal access: http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
+                echo "🌐 Service: http://${SERVICE_NAME}.${K3S_NAMESPACE}.svc.cluster.local:${PORT}"
+                echo ""
                 echo "📊 Final system status:"
-                kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service --no-headers -o custom-columns="NAME:.metadata.name,STATUS:.status.phase" || true
-                free -h | head -2 || echo "Memory info not available"
+                kubectl get pods -n ${K3S_NAMESPACE} -l app=auth-service \
+                    -o custom-columns="NAME:.metadata.name,COLOR:.metadata.labels.color,STATUS:.status.phase,READY:.status.conditions[?(@.type=='Ready')].status"
             '''
         }
     }
 }
-
