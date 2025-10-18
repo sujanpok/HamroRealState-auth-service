@@ -87,15 +87,22 @@ pipeline {
                 dir("${APP_DIR}") {
                     sh '''
                         echo "🏗️ Building Docker image for Oracle Cloud (AMD64)..."
-                        
-                        docker build \
+
+                        # Create/use buildx builder
+                        docker buildx create --use --name amd64-builder --driver docker-container 2>/dev/null || \
+                        docker buildx use amd64-builder
+
+                        # Bootstrap builder
+                        docker buildx inspect --bootstrap
+
+                        # Build ONLY for AMD64 (OKE architecture)
+                        docker buildx build \
+                            --platform linux/amd64 \
                             -t ${DOCKER_IMAGE}:${DOCKER_TAG} \
-                            -t ${DOCKER_IMAGE}:latest .
-                        
-                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                        docker push ${DOCKER_IMAGE}:latest
-                        
-                        echo "✅ Image pushed: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                            -t ${DOCKER_IMAGE}:latest \
+                            --push .
+
+                        echo "✅ AMD64 image pushed: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                     '''
                 }
             }
