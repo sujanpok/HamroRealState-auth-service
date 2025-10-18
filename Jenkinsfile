@@ -86,14 +86,16 @@ pipeline {
             steps {
                 dir("${APP_DIR}") {
                     sh '''
-                        echo "🏗️ Building Docker image for multi-arch (AMD64/ARM64)..."
-                        docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
-                        docker buildx build \
-                            --platform linux/amd64,linux/arm64 \
+                        echo "🏗️ Building Docker image for Oracle Cloud (AMD64)..."
+                        
+                        docker build \
                             -t ${DOCKER_IMAGE}:${DOCKER_TAG} \
-                            -t ${DOCKER_IMAGE}:latest \
-                            --push .
-                        echo "✅ Multi-arch image pushed: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                            -t ${DOCKER_IMAGE}:latest .
+                        
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        docker push ${DOCKER_IMAGE}:latest
+                        
+                        echo "✅ Image pushed: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                     '''
                 }
             }
