@@ -8,7 +8,7 @@ appName: auth-service
 color: blue  # For blue-green deployment
 
 image:
-  repository: sujan1234ray/auth-service
+  repository: docker.io/sujan1234ray/auth-service
   pullPolicy: IfNotPresent
   tag: "latest"
 
