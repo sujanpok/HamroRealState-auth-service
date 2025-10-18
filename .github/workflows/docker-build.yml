@@ -1,0 +1,55 @@
+#!/bin/bash
+# This script creates a GitHub Actions workflow file for building and pushing an AMD64 Docker image
+name: Build AMD64 Docker Image
+
+on:
+  push:
+    branches:
+      - oracle_migration
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: sujan1234ray/auth-service
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build and push AMD64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:build-${{ github.run_number }}
+            ${{ env.DOCKER_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Image summary
+        run: |
+          echo "### ✅ Docker Image Built Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.DOCKER_IMAGE }}:build-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Platform:** \`linux/amd64\` (Native build)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 **Next:** Jenkins will auto-deploy to Oracle Cloud OKE" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Trigger Jenkins (optional)
+        run: |
+          echo "GitHub Actions build completed!"
+          echo "Jenkins webhook will trigger deployment automatically"
