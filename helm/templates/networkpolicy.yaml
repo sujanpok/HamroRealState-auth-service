@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ .Release.Name }}-egress
+  name: {{ .Release.Name }}-network-policy
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
@@ -9,16 +9,33 @@ spec:
       app: {{ .Values.appName }}
       color: {{ .Values.color }}
   policyTypes:
-  - Egress
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: {{ .Values.service.targetPort }}
   egress:
-  - to:
-    - namespaceSelector: {}
-  - to:
-    - podSelector: {}
-  - ports:
-    - protocol: TCP
-      port: 5432  # PostgreSQL
-    - protocol: TCP
-      port: 443   # HTTPS
-    - protocol: UDP
-      port: 53    # DNS
+    # Allow DNS
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: UDP
+        port: 53
+    # Allow HTTPS
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443
+    # Allow PostgreSQL
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 5432
+    # Allow all to pods in same namespace
+    - to:
+      - podSelector: {}

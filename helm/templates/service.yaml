@@ -1,22 +1,39 @@
-{{- if not (lookup "v1" "Service" .Release.Namespace "auth-service") }}
-# Only create service if it doesn't exist yet
+{{- if not (lookup "v1" "Service" .Release.Namespace .Values.service.serviceName) }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: auth-service
+  name: {{ .Values.service.serviceName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: auth-service
+    app: {{ .Values.appName }}
   annotations:
     helm.sh/resource-policy: keep
+    # OCI Load Balancer Annotations for Always Free Tier
+    oci.oraclecloud.com/load-balancer-type: "{{ .Values.service.ociLoadBalancerType }}"
+    service.beta.kubernetes.io/oci-load-balancer-shape: "{{ .Values.service.loadBalancerShape }}"
+    {{- if eq .Values.service.loadBalancerShape "flexible" }}
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-min: "{{ .Values.service.flexShapeMin }}"
+    service.beta.kubernetes.io/oci-load-balancer-shape-flex-max: "{{ .Values.service.flexShapeMax }}"
+    {{- end }}
+    service.beta.kubernetes.io/oci-load-balancer-subnet1: "{{ .Values.service.loadBalancerSubnet1 }}"
+    {{- if .Values.service.loadBalancerSubnet2 }}
+    service.beta.kubernetes.io/oci-load-balancer-subnet2: "{{ .Values.service.loadBalancerSubnet2 }}"
+    {{- end }}
+    service.beta.kubernetes.io/oci-load-balancer-internal: "{{ .Values.service.internal }}"
+    {{- if .Values.service.healthCheckPath }}
+    service.beta.kubernetes.io/oci-load-balancer-health-check-path: "{{ .Values.service.healthCheckPath }}"
+    {{- end }}
+    {{- if .Values.service.healthCheckPort }}
+    service.beta.kubernetes.io/oci-load-balancer-health-check-port: "{{ .Values.service.healthCheckPort }}"
+    {{- end }}
 spec:
   type: {{ .Values.service.type }}
-  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
   ports:
-  - port: {{ .Values.service.port }}
-    targetPort: {{ .Values.service.targetPort }}
-    protocol: TCP
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
   selector:
-    app: auth-service
+    app: {{ .Values.appName }}
     color: {{ .Values.color }}
 {{- end }}

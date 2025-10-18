@@ -1,6 +1,11 @@
-replicaCount: 1
+# ============================================================
+# Oracle Cloud Always Free Tier Configuration - $0/month
+# ============================================================
+
+replicaCount: 1  # Keep at 1 for free tier
 
 appName: auth-service
+color: blue  # For blue-green deployment
 
 image:
   repository: sujan1234ray/auth-service
@@ -12,8 +17,21 @@ service:
   port: 80
   targetPort: 3001
   serviceName: auth-service
-  loadBalancerIP: 192.168.1.200
-  nodePort: 30080
+  
+  # ⚠️ CRITICAL: OCI Load Balancer Configuration for Always Free Tier
+  # DO NOT CHANGE flexShapeMin/Max from "10" or you'll be charged!
+  ociLoadBalancerType: "lb"
+  loadBalancerShape: "flexible"
+  flexShapeMin: "10"   # FREE tier limit - DO NOT INCREASE
+  flexShapeMax: "10"   # FREE tier limit - DO NOT INCREASE
+  
+  # Your OKE Service LB Subnet OCID
+  loadBalancerSubnet1: "ocid1.subnet.oc1.ap-tokyo-1.aaaaaaaadrjobrpvosw2w4dgqf3si2fniobqyzyd5k3j3endhdhvbgozb62q"
+  loadBalancerSubnet2: ""
+  
+  internal: "false"  # Public load balancer
+  healthCheckPath: "/health"
+  healthCheckPort: "3001"
 
 # Environment variables for ConfigMap
 env:
@@ -33,7 +51,7 @@ env:
   JWT_EXPIRATION: "10m"
   NODE_ENV: "production"
 
-# Sensitive variables for Secret
+# Sensitive variables - Jenkins will inject these
 secrets:
   JWT_SECRET: ""
   DB_PASSWORD: ""
@@ -41,21 +59,23 @@ secrets:
   CLIENT_SECRET: ""
   FIREBASE_DATABASE_URL: ""
 
+# Resource limits - Optimized for Always Free Tier (4 OCPU + 24GB RAM total)
 resources:
   limits:
-    cpu: 500m
-    memory: 512Mi
+    cpu: 1000m      # 1 CPU core max per pod
+    memory: 2Gi     # 2GB RAM max per pod
   requests:
-    cpu: 250m
-    memory: 256Mi
+    cpu: 250m       # 0.25 CPU minimum
+    memory: 512Mi   # 512MB minimum
 
+# Health probes - Relaxed timings for free tier
 livenessProbe:
   httpGet:
     path: /health
     port: 3001
-  initialDelaySeconds: 20
-  periodSeconds: 10
-  timeoutSeconds: 3
+  initialDelaySeconds: 45  # Longer wait for ARM/free tier nodes
+  periodSeconds: 15
+  timeoutSeconds: 5
   failureThreshold: 3
   successThreshold: 1
 
@@ -63,8 +83,8 @@ readinessProbe:
   httpGet:
     path: /health
     port: 3001
-  initialDelaySeconds: 5
-  periodSeconds: 5
+  initialDelaySeconds: 15
+  periodSeconds: 10
   timeoutSeconds: 3
   failureThreshold: 3
   successThreshold: 1
@@ -72,9 +92,8 @@ readinessProbe:
 imagePullSecrets:
   - name: docker-hub-credentials
 
-nodeSelector:
-  kubernetes.io/arch: arm64
+# ❌ REMOVED: nodeSelector arm64 (OKE handles node selection)
+nodeSelector: {}
 
 tolerations: []
-
 affinity: {}
