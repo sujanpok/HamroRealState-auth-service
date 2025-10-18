@@ -9,7 +9,7 @@ pipeline {
         // Docker Hub
         DOCKER_HUB = credentials('docker-hub-credentials')
 
-        // ✅ FIXED: OKE kubeconfig path (update this to your Jenkins OKE kubeconfig location)
+        // ✅ OKE kubeconfig path
         KUBECONFIG = '/var/lib/jenkins/.kube/oke-config'
 
         // App configs
@@ -25,7 +25,7 @@ pipeline {
 
         // OKE and Helm configs
         HELM_CHART_PATH = './helm'
-        OKE_NAMESPACE   = 'default'  // Changed from K3S_NAMESPACE
+        OKE_NAMESPACE   = 'default'
         SERVICE_NAME    = 'auth-service'
 
         // Blue-Green specific
