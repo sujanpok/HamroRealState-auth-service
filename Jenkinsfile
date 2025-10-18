@@ -147,7 +147,7 @@ pipeline {
                             helm upgrade --install ${NEW_RELEASE} ${HELM_CHART_PATH} \
                                 --values ${HELM_CHART_PATH}/values.yaml \
                                 --set color=${NEW_COLOR} \
-                                --set image.repository=${DOCKER_IMAGE} \
+                                --set image.repository=docker.io/${DOCKER_IMAGE} \
                                 --set image.tag=${DOCKER_TAG} \
                                 --set env.NODE_ENV=${NODE_ENV} \
                                 --set env.DB_HOST=${DB_HOST} \
